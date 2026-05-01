@@ -121,7 +121,8 @@ import {
   linkGrouterConnection,
   unlinkGrouterConnection,
   parseDeviceCodeAuthOutput,
-  isDeviceCodeAuthComplete
+  isDeviceCodeAuthComplete,
+  loadGrouterConfig
 } from "@maestro/providers";
 
 interface ParsedArgs {
@@ -1457,6 +1458,9 @@ async function handleProviderCommand(homeDir: string, args: string[]): Promise<v
     case "discover":
       await providerDiscover(homeDir, rest);
       break;
+    case "test":
+      await providerTest(homeDir, rest);
+      break;
     case "auth":
       await handleProviderAuthCommand(homeDir, rest);
       break;
@@ -1567,11 +1571,249 @@ async function providerDiscover(homeDir: string, args: string[]): Promise<void> 
   }
 }
 
+async function providerTest(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const provider = getFlag(flags, "provider");
+  const prompt = getFlag(flags, "prompt");
+  const confirm = getFlag(flags, "confirm");
+
+  // Only openclaude_grouter is supported for now
+  if (provider !== "openclaude_grouter") {
+    throw new Error(`Provider test only supports openclaude_grouter. Got: ${provider || "none"}`);
+  }
+
+  if (!prompt) {
+    throw new Error("--prompt is required. Example: --prompt \"Responda apenas: OK\"");
+  }
+
+  // Require explicit confirmation
+  if (confirm !== "RUN_PROVIDER_TEST") {
+    throw new Error("Provider test requires explicit confirmation. Add: --confirm RUN_PROVIDER_TEST");
+  }
+
+  console.log(`Running provider test for: ${provider}\n`);
+  console.log(`Prompt: ${prompt}\n`);
+
+  // Load config
+  const configPath = path.join(homeDir, "data", "config", "openclaude-grouter.json");
+  let config: any;
+  try {
+    const content = await fs.readFile(configPath, "utf8");
+    config = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Config file not found: ${configPath}\nCopy from: config/openclaude-grouter.example.json`);
+  }
+
+  // Pre-flight checks
+  console.log("Pre-flight checks:\n");
+
+  // Check 1: Doctor is READY
+  const doctorResult = await doctorOpenClaudeGrouterProvider(homeDir);
+  if (doctorResult.status !== "READY") {
+    console.log(`✗ Doctor status: ${doctorResult.status}`);
+    console.log(`\nProvider is not READY. Run: maestro provider doctor --provider openclaude_grouter`);
+    throw new Error("Provider doctor is not READY");
+  }
+  console.log(`✓ Doctor status: READY`);
+
+  // Check 2: Grouter daemon is running (BLOCKING for test)
+  const grouterConfig = await loadGrouterConfig(homeDir);
+  if (!grouterConfig || !grouterConfig.executablePath) {
+    throw new Error("Grouter config not found");
+  }
+
+  let daemonRunning = false;
+  try {
+    const { stdout } = await execFileAsync(grouterConfig.executablePath, ["status"], {
+      timeout: 5000
+    });
+    daemonRunning = stdout.includes("running") || stdout.includes("active");
+  } catch (error: any) {
+    // Grouter status may return exit code 1 but still have output
+    const stdout = error.stdout || "";
+    daemonRunning = stdout.includes("running") || stdout.includes("active");
+  }
+
+  if (!daemonRunning) {
+    console.log(`✗ Grouter daemon: NOT RUNNING`);
+    console.log(`\nGrouter daemon is required for provider test.`);
+    console.log(`Run: grouter serve on`);
+    throw new Error("Grouter daemon is not running");
+  }
+  console.log(`✓ Grouter daemon: RUNNING`);
+
+  // Check 3: Model is configured
+  if (!config.model || config.model.trim() === "") {
+    console.log(`✗ Model: NOT CONFIGURED`);
+    console.log(`\nModel is not configured in data/config/openclaude-grouter.json.`);
+    console.log(`Run: grouter models`);
+    console.log(`Then set model in config.`);
+    throw new Error("Model is not configured");
+  }
+  console.log(`✓ Model: ${config.model}`);
+
+  // Check 4: Linked connection exists
+  const state = await loadState(homeDir);
+  const connection = state.grouterConnections.find((c) => c.id === config.linkedConnectionId);
+  if (!connection) {
+    throw new Error(`Linked connection not found: ${config.linkedConnectionId}`);
+  }
+  console.log(`✓ Linked connection: ${connection.id} (${connection.label || "no label"})`);
+
+  console.log("\nAll pre-flight checks passed. Executing test...\n");
+
+  // Create test directory
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const testDir = path.join(homeDir, "data", "providers", "openclaude-grouter", "tests", timestamp);
+  await fs.mkdir(testDir, { recursive: true });
+
+  // Save metadata
+  const metadata = {
+    timestamp,
+    provider,
+    prompt,
+    model: config.model,
+    linkedConnectionId: config.linkedConnectionId,
+    baseUrl: config.baseUrl
+  };
+  await fs.writeFile(path.join(testDir, "00-test-metadata.json"), JSON.stringify(metadata, null, 2), "utf8");
+
+  // Save prompt
+  await fs.writeFile(path.join(testDir, "01-prompt.md"), prompt, "utf8");
+
+  // Execute OpenClaude
+  const execArgs = config.executableArgs ? [...config.executableArgs] : [];
+  execArgs.push(
+    "-p",
+    "--provider", "openai",
+    "--model", config.model,
+    "--output-format", "json",
+    "--bare",
+    "--no-session-persistence",
+    prompt
+  );
+
+  const env = {
+    ...process.env,
+    ...config.env
+  };
+
+  console.log(`Executing: ${config.executablePath} ${execArgs.join(" ")}\n`);
+
+  let stdout = "";
+  let stderr = "";
+  let exitCode = 0;
+  let error: Error | undefined;
+
+  try {
+    const result = await execFileAsync(config.executablePath, execArgs, {
+      timeout: config.timeoutMs || 300000,
+      env,
+      cwd: config.workingDirectory
+    });
+    stdout = result.stdout;
+    stderr = result.stderr;
+  } catch (err: any) {
+    error = err;
+    stdout = err.stdout || "";
+    stderr = err.stderr || "";
+    exitCode = err.code || 1;
+  }
+
+  // Save outputs
+  await fs.writeFile(path.join(testDir, "02-stdout.txt"), stdout, "utf8");
+  await fs.writeFile(path.join(testDir, "03-stderr.txt"), stderr, "utf8");
+
+  // Generate result
+  const resultMd = `# Provider Test Result
+
+## Timestamp
+
+${timestamp}
+
+## Provider
+
+${provider}
+
+## Prompt
+
+\`\`\`
+${prompt}
+\`\`\`
+
+## Model
+
+${config.model}
+
+## Linked Connection
+
+${config.linkedConnectionId} (${connection.label || "no label"})
+
+## Exit Code
+
+${exitCode}
+
+## Stdout
+
+\`\`\`
+${stdout}
+\`\`\`
+
+## Stderr
+
+\`\`\`
+${stderr}
+\`\`\`
+
+## Status
+
+${error ? "❌ FAILED" : "✅ SUCCESS"}
+
+${error ? `### Error\n\n${error.message}` : ""}
+
+## Test Directory
+
+${testDir}
+`;
+
+  await fs.writeFile(path.join(testDir, "04-result.md"), resultMd, "utf8");
+
+  // Print result
+  console.log("Test completed.\n");
+  console.log(`Exit code: ${exitCode}`);
+  console.log(`Status: ${error ? "FAILED" : "SUCCESS"}\n`);
+
+  if (stdout) {
+    console.log("Stdout (first 500 chars):");
+    console.log(stdout.slice(0, 500));
+    if (stdout.length > 500) {
+      console.log("...(truncated)");
+    }
+    console.log("");
+  }
+
+  if (stderr) {
+    console.log("Stderr (first 500 chars):");
+    console.log(stderr.slice(0, 500));
+    if (stderr.length > 500) {
+      console.log("...(truncated)");
+    }
+    console.log("");
+  }
+
+  console.log(`Full result saved to: ${path.join(testDir, "04-result.md")}`);
+
+  if (error) {
+    throw new Error(`Provider test failed: ${error.message}`);
+  }
+}
+
 function printProviderHelp(): void {
   console.log(`Provider commands:
 
   maestro provider doctor [--provider grouter|openclaude|openclaude_grouter|kiro_cli]
   maestro provider discover [--provider grouter|openclaude|openclaude_grouter|kiro_cli]
+  maestro provider test --provider openclaude_grouter --prompt "<prompt>" --confirm RUN_PROVIDER_TEST
   maestro provider grouter list
   maestro provider grouter sync
   maestro provider grouter link --connection <id> --provider <provider> [--label <label>]
@@ -1583,6 +1825,7 @@ function printProviderHelp(): void {
 
 Note: grouter is the PRIMARY provider path for Maestro.
       openclaude_grouter uses OpenClaude with Grouter endpoint (recommended).
+      provider test requires explicit --confirm RUN_PROVIDER_TEST flag.
       kiro_cli is EXPERIMENTAL and may use global auth.
 `);
 }

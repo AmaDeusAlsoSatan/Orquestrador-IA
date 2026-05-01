@@ -21,6 +21,9 @@ data/vault/projects/*
 # Provider runtime data (isolated OpenClaude, Kiro CLI, etc.)
 data/providers/
 
+# Provider test outputs
+data/providers/*/tests/
+
 # Real provider configs (keep examples in config/)
 data/config/openclaude.json
 data/config/kiro-cli.json

@@ -565,6 +565,184 @@ This verifies that Grouter can communicate with Kiro using the stored credential
 8. ⏳ Test with a simple invocation
 9. ⏳ Integrate into full workflow
 
+## OpenClaude-Grouter Provider Test
+
+### Overview
+
+The provider test command allows you to test OpenClaude via Grouter with a minimal prompt **without integrating into runs or modifying projects**. This is a safe way to validate that the entire chain (Maestro → OpenClaude → Grouter → Kiro) is working correctly.
+
+### Command
+
+```bash
+maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST
+```
+
+### Requirements
+
+**Explicit Confirmation:**
+- The `--confirm RUN_PROVIDER_TEST` flag is **required**
+- Without this flag, the command will block
+- This prevents accidental execution
+
+**Pre-flight Checks (BLOCKING):**
+1. ✓ Config file exists: `data/config/openclaude-grouter.json`
+2. ✓ Provider doctor is READY
+3. ✓ **Grouter daemon is running** (BLOCKING for test, unlike doctor which only warns)
+4. ✓ **Model is configured** in config file
+5. ✓ Linked connection exists and is in allowlist
+
+**Note:** For doctor/discovery, Grouter daemon offline is only a WARNING. For test execution, it's BLOCKING.
+
+### What It Does
+
+1. Loads `data/config/openclaude-grouter.json`
+2. Runs all pre-flight checks
+3. Executes OpenClaude in non-interactive mode:
+   ```bash
+   node <openclaude-bin> -p --provider openai --output-format json "<prompt>"
+   ```
+4. Injects environment variables:
+   - `OPENCLAUDE_HOME=./data/providers/openclaude-grouter`
+   - `OPENAI_BASE_URL=http://127.0.0.1:3099/v1`
+   - `OPENAI_API_KEY=any-value`
+   - `OPENAI_MODEL=<model>`
+5. Captures stdout and stderr
+6. Saves all outputs to test directory
+
+### What It Does NOT Do
+
+- ❌ Does not attach output to any run
+- ❌ Does not modify project state
+- ❌ Does not modify repository
+- ❌ Does not integrate with AgentInvocation
+- ❌ Does not commit anything to git
+
+### Output Location
+
+All test outputs are saved to:
+
+```
+data/providers/openclaude-grouter/tests/<timestamp>/
+  00-test-metadata.json   # Test configuration
+  01-prompt.md            # The prompt sent
+  02-stdout.txt           # OpenClaude stdout
+  03-stderr.txt           # OpenClaude stderr
+  04-result.md            # Full test report
+```
+
+**These files are NOT committed to git** (excluded via `.gitignore`).
+
+### Example: Model Not Configured
+
+```bash
+$ maestro provider test --provider openclaude_grouter --prompt "OK" --confirm RUN_PROVIDER_TEST
+
+Pre-flight checks:
+
+✓ Doctor status: READY
+✓ Grouter daemon: RUNNING
+✗ Model: NOT CONFIGURED
+
+Model is not configured in data/config/openclaude-grouter.json.
+Run: grouter models
+Then set model in config.
+
+Error: Model is not configured
+```
+
+### Example: Daemon Not Running
+
+```bash
+$ maestro provider test --provider openclaude_grouter --prompt "OK" --confirm RUN_PROVIDER_TEST
+
+Pre-flight checks:
+
+✓ Doctor status: READY
+✗ Grouter daemon: NOT RUNNING
+
+Grouter daemon is required for provider test.
+Run: grouter serve on
+
+Error: Grouter daemon is not running
+```
+
+### Example: Successful Test
+
+```bash
+$ maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST
+
+Pre-flight checks:
+
+✓ Doctor status: READY
+✓ Grouter daemon: RUNNING
+✓ Model: claude-sonnet-4
+✓ Linked connection: 0c010b69 (Kiro principal)
+
+All pre-flight checks passed. Executing test...
+
+Executing: node C:\...\openclaude\bin\openclaude -p --provider openai --output-format json Responda apenas: OK
+
+Test completed.
+
+Exit code: 0
+Status: SUCCESS
+
+Stdout (first 500 chars):
+{"response":"OK"}
+
+Full result saved to: data/providers/openclaude-grouter/tests/2026-05-01T21-30-00-000Z/04-result.md
+```
+
+### Workflow
+
+**Before running test:**
+
+1. Ensure Grouter daemon is running:
+   ```bash
+   grouter serve on
+   ```
+
+2. Check available models:
+   ```bash
+   grouter models
+   ```
+
+3. Configure model in `data/config/openclaude-grouter.json`:
+   ```json
+   {
+     "model": "claude-sonnet-4",
+     ...
+   }
+   ```
+
+4. Run provider doctor:
+   ```bash
+   maestro provider doctor --provider openclaude_grouter
+   ```
+
+5. Run test:
+   ```bash
+   maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST
+   ```
+
+### Security
+
+- ✓ Requires explicit confirmation flag
+- ✓ Does not touch project repositories
+- ✓ Does not modify Maestro state
+- ✓ Outputs are not committed to git
+- ✓ Email addresses are masked in logs
+- ✓ No tokens are logged
+
+### Next Steps After Successful Test
+
+Once the test responds correctly (e.g., "OK"), the next phase will be:
+
+1. Connect `openclaude_grouter` to `AgentInvocation`
+2. Start with Supervisor/Reviewer roles (no file modifications)
+3. Then add Executor role (with file modifications in sandbox)
+4. Integrate into full workflow
+
 ## Kiro CLI Direct (EXPERIMENTAL - Quarantined)
 
 ### Overview
