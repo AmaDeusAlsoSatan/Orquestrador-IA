@@ -1590,9 +1590,9 @@ async function providerTest(homeDir: string, args: string[]): Promise<void> {
   const timeoutMs = parseTimeoutMs(getFlag(flags, "timeout-ms"), 300000);
   const variant = parseProviderTestVariant(getFlag(flags, "variant") || "current");
 
-  // Only openclaude_grouter is supported for now
-  if (provider !== "openclaude_grouter") {
-    throw new Error(`Provider test only supports openclaude_grouter. Got: ${provider || "none"}`);
+  // Support openclaude_grouter and grouter
+  if (provider !== "openclaude_grouter" && provider !== "grouter") {
+    throw new Error(`Provider test only supports openclaude_grouter and grouter. Got: ${provider || "none"}`);
   }
 
   if (!prompt) {
@@ -1610,6 +1610,20 @@ async function providerTest(homeDir: string, args: string[]): Promise<void> {
   console.log(`Timeout: ${timeoutMs}ms`);
   console.log(`Debug: ${debug ? "yes" : "no"}\n`);
 
+  if (provider === "grouter") {
+    await providerTestGrouterDirect(homeDir, prompt, timeoutMs, debug);
+  } else {
+    await providerTestOpenClaudeGrouter(homeDir, prompt, timeoutMs, debug, variant);
+  }
+}
+
+async function providerTestOpenClaudeGrouter(
+  homeDir: string,
+  prompt: string,
+  timeoutMs: number,
+  debug: boolean,
+  variant: ProviderTestVariant
+): Promise<void> {
   // Load config
   const configPath = path.join(homeDir, "data", "config", "openclaude-grouter.json");
   let config: any;
@@ -1686,7 +1700,7 @@ async function providerTest(homeDir: string, args: string[]): Promise<void> {
   // Save metadata
   const metadata = {
     timestamp,
-    provider,
+    provider: "openclaude_grouter",
     prompt,
     model: config.model,
     variant,
@@ -1758,7 +1772,7 @@ ${timestamp}
 
 ## Provider
 
-${provider}
+openclaude_grouter
 
 ## Prompt
 
@@ -1851,6 +1865,250 @@ ${testDir}
 
   if (error) {
     throw new Error(`Provider test failed: ${error.message}`);
+  }
+}
+
+async function providerTestGrouterDirect(
+  homeDir: string,
+  prompt: string,
+  timeoutMs: number,
+  debug: boolean
+): Promise<void> {
+  console.log("Pre-flight checks:\n");
+
+  // Load config from openclaude-grouter (has baseUrl, model, linkedConnectionId)
+  const configPath = path.join(homeDir, "data", "config", "openclaude-grouter.json");
+  let config: any;
+  try {
+    const content = await fs.readFile(configPath, "utf8");
+    config = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Config file not found: ${configPath}\nCopy from: config/openclaude-grouter.example.json`);
+  }
+
+  // Check 1: Grouter doctor is READY
+  const grouterDoctor = await doctorGrouterProvider(homeDir);
+  if (grouterDoctor.status !== "READY") {
+    console.log(`✗ Grouter doctor: ${grouterDoctor.status}`);
+    console.log(`\nGrouter provider is not READY. Run: maestro provider doctor --provider grouter`);
+    throw new Error("Grouter doctor is not READY");
+  }
+  console.log(`✓ Grouter doctor: READY`);
+
+  // Check 2: Grouter daemon is running
+  const grouterConfig = await loadGrouterConfig(homeDir);
+  if (!grouterConfig || !grouterConfig.executablePath) {
+    throw new Error("Grouter config not found");
+  }
+
+  let daemonRunning = false;
+  try {
+    const { stdout } = await execFileAsync(grouterConfig.executablePath, ["status"], {
+      timeout: 5000
+    });
+    daemonRunning = stdout.includes("running") || stdout.includes("active");
+  } catch (error: any) {
+    const stdout = error.stdout || "";
+    daemonRunning = stdout.includes("running") || stdout.includes("active");
+  }
+
+  if (!daemonRunning) {
+    console.log(`✗ Grouter daemon: NOT RUNNING`);
+    console.log(`\nGrouter daemon is required for provider test.`);
+    console.log(`Run: grouter serve on`);
+    throw new Error("Grouter daemon is not running");
+  }
+  console.log(`✓ Grouter daemon: RUNNING`);
+
+  // Check 3: Model is configured
+  if (!config.model || config.model.trim() === "") {
+    console.log(`✗ Model: NOT CONFIGURED`);
+    console.log(`\nModel is not configured in data/config/openclaude-grouter.json.`);
+    console.log(`Run: grouter models`);
+    console.log(`Then set model in config.`);
+    throw new Error("Model is not configured");
+  }
+  console.log(`✓ Model: ${config.model}`);
+
+  // Check 4: Linked connection exists
+  const state = await loadState(homeDir);
+  const connection = state.grouterConnections.find((c) => c.id === config.linkedConnectionId);
+  if (!connection) {
+    throw new Error(`Linked connection not found: ${config.linkedConnectionId}`);
+  }
+  console.log(`✓ Linked connection: ${connection.id} (${connection.label || "no label"})`);
+
+  console.log("\nAll pre-flight checks passed. Executing direct HTTP test...\n");
+
+  // Create test directory
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const testDir = path.join(homeDir, "data", "providers", "grouter", "tests", timestamp);
+  await fs.mkdir(testDir, { recursive: true });
+
+  // Prepare request
+  const requestBody = {
+    model: config.model,
+    messages: [
+      { role: "user", content: prompt }
+    ],
+    temperature: 0
+  };
+
+  const requestMetadata = {
+    timestamp,
+    provider: "grouter",
+    prompt,
+    model: config.model,
+    linkedConnectionId: config.linkedConnectionId,
+    baseUrl: config.baseUrl,
+    endpoint: `${config.baseUrl}/chat/completions`
+  };
+
+  // Save metadata and request
+  await fs.writeFile(path.join(testDir, "00-test-metadata.json"), JSON.stringify(requestMetadata, null, 2), "utf8");
+  await fs.writeFile(path.join(testDir, "01-request.json"), JSON.stringify(requestBody, null, 2), "utf8");
+
+  console.log(`Endpoint: ${config.baseUrl}/chat/completions`);
+  console.log(`Model: ${config.model}`);
+  console.log(`Prompt: ${prompt}\n`);
+
+  // Execute HTTP request with timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: any;
+  let responseText = "";
+  let error: Error | undefined;
+  let statusCode: number | undefined;
+  let timedOut = false;
+  const startTime = Date.now();
+
+  try {
+    const fetchResponse = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
+    });
+
+    statusCode = fetchResponse.status;
+    responseText = await fetchResponse.text();
+
+    if (fetchResponse.ok) {
+      response = JSON.parse(responseText);
+    } else {
+      error = new Error(`HTTP ${statusCode}: ${responseText}`);
+    }
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      timedOut = true;
+      error = new Error("Request timed out");
+    } else {
+      error = err;
+    }
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  const elapsedMs = Date.now() - startTime;
+
+  // Save response or error
+  if (response) {
+    await fs.writeFile(path.join(testDir, "02-response.json"), JSON.stringify(response, null, 2), "utf8");
+  }
+  if (error) {
+    await fs.writeFile(path.join(testDir, "03-error.txt"), error.message, "utf8");
+  }
+
+  // Generate result
+  const status = timedOut ? "TIMEOUT" : error ? "FAILED" : "SUCCESS";
+  const resultMd = `# Direct Grouter Provider Test Result
+
+## Timestamp
+
+${timestamp}
+
+## Provider
+
+grouter (direct HTTP)
+
+## Endpoint
+
+${config.baseUrl}/chat/completions
+
+## Request
+
+\`\`\`json
+${JSON.stringify(requestBody, null, 2)}
+\`\`\`
+
+## Model
+
+${config.model}
+
+## Linked Connection
+
+${config.linkedConnectionId} (${connection.label || "no label"})
+
+## Status Code
+
+${statusCode || "N/A"}
+
+## Elapsed Time
+
+${elapsedMs}ms (timeout: ${timeoutMs}ms)
+
+## Response
+
+${response ? `\`\`\`json\n${JSON.stringify(response, null, 2)}\n\`\`\`` : "No response"}
+
+## Error
+
+${error ? error.message : "None"}
+
+## Status
+
+${status === "SUCCESS" ? "✅ SUCCESS" : status === "TIMEOUT" ? "⏱️ TIMEOUT" : "❌ FAILED"}
+
+## Test Directory
+
+${testDir}
+`;
+
+  await fs.writeFile(path.join(testDir, "04-result.md"), resultMd, "utf8");
+
+  // Print result
+  console.log("Test completed.\n");
+  console.log(`Status: ${status}`);
+  console.log(`Elapsed: ${elapsedMs}ms\n`);
+
+  if (statusCode) {
+    console.log(`HTTP Status: ${statusCode}`);
+  }
+
+  if (response) {
+    console.log("\nResponse (first 500 chars):");
+    const responseStr = JSON.stringify(response, null, 2);
+    console.log(responseStr.slice(0, 500));
+    if (responseStr.length > 500) {
+      console.log("...(truncated)");
+    }
+    console.log("");
+  }
+
+  if (error) {
+    console.log("\nError:");
+    console.log(error.message);
+    console.log("");
+  }
+
+  console.log(`Full result saved to: ${path.join(testDir, "04-result.md")}`);
+
+  if (error) {
+    throw new Error(`Direct Grouter test failed: ${error.message}`);
   }
 }
 
@@ -2235,7 +2493,7 @@ function printProviderHelp(): void {
 
   maestro provider doctor [--provider grouter|openclaude|openclaude_grouter|kiro_cli]
   maestro provider discover [--provider grouter|openclaude|openclaude_grouter|kiro_cli]
-  maestro provider test --provider openclaude_grouter --prompt "<prompt>" --confirm RUN_PROVIDER_TEST [--debug] [--timeout-ms <ms>] [--variant <minimal|json|bare|no-session|current>]
+  maestro provider test --provider grouter|openclaude_grouter --prompt "<prompt>" --confirm RUN_PROVIDER_TEST [--debug] [--timeout-ms <ms>] [--variant <minimal|json|bare|no-session|current>]
   maestro provider grouter list
   maestro provider grouter sync
   maestro provider grouter link --connection <id> --provider <provider> [--label <label>]
@@ -2246,7 +2504,8 @@ function printProviderHelp(): void {
   maestro provider auth cancel --session <session-id>
 
 Note: grouter is the PRIMARY provider path for Maestro.
-      openclaude_grouter uses OpenClaude with Grouter endpoint (recommended).
+      provider test --provider grouter tests direct HTTP to Grouter endpoint (isolates Grouter vs OpenClaude issues).
+      provider test --provider openclaude_grouter tests via OpenClaude CLI.
       provider test requires explicit --confirm RUN_PROVIDER_TEST flag.
       kiro_cli is EXPERIMENTAL and may use global auth.
 `);
