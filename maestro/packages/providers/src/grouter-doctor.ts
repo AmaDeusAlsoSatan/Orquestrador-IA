@@ -172,20 +172,57 @@ export async function doctorGrouterProvider(homeDir: string): Promise<ProviderDo
         });
       }
 
-      // Check 7: Check for global home usage
+      // Check 7: Check for global home usage and existing connections (runs independently)
       try {
-        const { stdout } = await execFileAsync(config.executablePath, ["config"], {
+        const { stdout: configOutput, stderr: configStderr } = await execFileAsync(config.executablePath, ["config"], {
           timeout: 5000
         });
         
-        if (stdout.includes("~/.grouter") || stdout.includes(".grouter/grouter.db")) {
-          checks.push({
-            id: "isolation-check",
-            label: "Isolation check",
-            status: "WARN",
-            message: "Grouter may be using global home",
-            details: "WARNING: Default global home detected (~/.grouter). Isolation not confirmed. Check if dataHome is being used."
-          });
+        const fullConfigOutput = configOutput || configStderr;
+        const usesGlobalHome = fullConfigOutput.includes("~/.grouter") || fullConfigOutput.includes(".grouter/grouter.db");
+        
+        if (usesGlobalHome) {
+          // Check if there are existing connections
+          try {
+            const result = await execFileAsync(config.executablePath, ["list"], {
+              timeout: 5000
+            }).catch((err: any) => {
+              // Capture output even if command fails
+              return { stdout: err.stdout || "", stderr: err.stderr || "" };
+            });
+            
+            const fullListOutput = result.stdout || result.stderr;
+            // Parse list output to count connections
+            const lines = fullListOutput.split("\n").filter((line: string) => line.trim().match(/^\d+\s+\w+/));
+            const connectionCount = lines.length;
+            
+            if (connectionCount > 0) {
+              checks.push({
+                id: "isolation-check",
+                label: "Isolation check",
+                status: "ERROR",
+                message: "Grouter is using global storage with existing connections",
+                details: `CRITICAL: Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nThis may belong to Kofuku or another project.\nGrouter does not support isolated storage via environment variables or flags.\nRECOMMENDATION: Use a separate Grouter instance or wrapper for Maestro.`
+              });
+              overallStatus = "BLOCKED";
+            } else {
+              checks.push({
+                id: "isolation-check",
+                label: "Isolation check",
+                status: "WARN",
+                message: "Grouter uses global home but no connections found",
+                details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nNo existing connections detected, but future connections will be shared globally.\nConsider using a separate Grouter instance for true isolation."
+              });
+            }
+          } catch (listError) {
+            checks.push({
+              id: "isolation-check",
+              label: "Isolation check",
+              status: "WARN",
+              message: "Grouter uses global home, could not check connections",
+              details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nCould not verify if existing connections exist.\nThis may conflict with other projects."
+            });
+          }
         } else {
           checks.push({
             id: "isolation-check",
@@ -194,14 +231,61 @@ export async function doctorGrouterProvider(homeDir: string): Promise<ProviderDo
             message: "No global home detected in config"
           });
         }
-      } catch {
-        checks.push({
-          id: "isolation-check",
-          label: "Isolation check",
-          status: "WARN",
-          message: "Could not verify isolation",
-          details: "Unable to check grouter config"
-        });
+      } catch (configError: any) {
+        // Try to extract stderr from error
+        const errorOutput = configError.stderr || configError.stdout || "";
+        const usesGlobalHome = errorOutput.includes("~/.grouter") || errorOutput.includes(".grouter/grouter.db");
+        
+        if (usesGlobalHome) {
+          // Even though command failed, we detected global home in error output
+          try {
+            const result = await execFileAsync(config.executablePath, ["list"], {
+              timeout: 5000
+            }).catch((err: any) => {
+              // Capture output even if command fails
+              return { stdout: err.stdout || "", stderr: err.stderr || "" };
+            });
+            
+            const fullListOutput = result.stdout || result.stderr;
+            const lines = fullListOutput.split("\n").filter((line: string) => line.trim().match(/^\d+\s+\w+/));
+            const connectionCount = lines.length;
+            
+            if (connectionCount > 0) {
+              checks.push({
+                id: "isolation-check",
+                label: "Isolation check",
+                status: "ERROR",
+                message: "Grouter is using global storage with existing connections",
+                details: `CRITICAL: Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nThis may belong to Kofuku or another project.\nGrouter does not support isolated storage via environment variables or flags.\nRECOMMENDATION: Use a separate Grouter instance or wrapper for Maestro.`
+              });
+              overallStatus = "BLOCKED";
+            } else {
+              checks.push({
+                id: "isolation-check",
+                label: "Isolation check",
+                status: "WARN",
+                message: "Grouter uses global home but no connections found",
+                details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nNo existing connections detected, but future connections will be shared globally.\nConsider using a separate Grouter instance for true isolation."
+              });
+            }
+          } catch {
+            checks.push({
+              id: "isolation-check",
+              label: "Isolation check",
+              status: "WARN",
+              message: "Grouter uses global home, could not check connections",
+              details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nCould not verify if existing connections exist.\nThis may conflict with other projects."
+            });
+          }
+        } else {
+          checks.push({
+            id: "isolation-check",
+            label: "Isolation check",
+            status: "WARN",
+            message: "Could not verify isolation",
+            details: `Unable to check grouter config: ${configError instanceof Error ? configError.message : String(configError)}`
+          });
+        }
       }
     } else {
       checks.push({
@@ -222,7 +306,7 @@ export async function doctorGrouterProvider(homeDir: string): Promise<ProviderDo
   const summary = overallStatus === "READY"
     ? "Grouter provider is ready (PRIMARY provider path)"
     : overallStatus === "BLOCKED"
-    ? "Grouter provider is blocked (configuration or setup issues)"
+    ? "Grouter provider is blocked (global storage with existing connections or configuration issues)"
     : "Grouter provider has errors";
 
   return {
