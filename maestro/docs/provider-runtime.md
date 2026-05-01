@@ -145,6 +145,220 @@ Grouter is a universal AI router that provides OAuth + API Key providers behind 
 - OpenAI-compatible endpoint for easy integration
 - Supports multiple providers (Kiro, Claude, OpenAI, etc.)
 
+**Architecture:**
+```
+Maestro (project/agent manager)
+  ↓ references connections via allowlist
+Grouter (account vault/manager)
+  ↓ exposes OpenAI-compatible endpoint
+OpenClaude (CLI/coding agent)
+  ↓ uses Grouter endpoint
+Kiro (model/provider)
+```
+
+## Grouter Account Linking
+
+### Philosophy
+
+**Grouter acts as the account vault/manager. Maestro does not copy credentials.**
+
+Instead of duplicating Kiro authorization, Maestro:
+1. Discovers existing Grouter connections (read-only)
+2. Links to specific connections via explicit allowlist
+3. Stores only safe references (`GrouterConnectionRef`)
+4. Never copies tokens, refresh tokens, or raw credentials
+5. Masks email addresses for privacy
+
+**Benefits:**
+- Single source of truth for accounts (Grouter)
+- No credential duplication
+- Explicit permission model (allowlist)
+- Audit trail of which connections are allowed
+- Easy to revoke access (unlink)
+
+### Configuration
+
+Grouter provider config requires three security fields:
+
+```json
+{
+  "allowGlobalStorageReadOnly": false,
+  "linkedConnectionIds": [],
+  "strictConnectionAllowlist": true
+}
+```
+
+**Fields:**
+- `allowGlobalStorageReadOnly`: Set to `true` to allow using global Grouter storage in read-only mode
+- `linkedConnectionIds`: Array of connection IDs explicitly allowed for Maestro use
+- `strictConnectionAllowlist`: If `true`, only linked connections can be used (recommended)
+
+### Doctor States
+
+The Grouter doctor has three states based on linking:
+
+**State A: BLOCKED (no read-only permission)**
+```
+Status: BLOCKED
+Message: Global Grouter storage detected; explicit linking required
+Action: Set allowGlobalStorageReadOnly=true and link connections
+```
+
+**State B: BLOCKED (read-only but no links)**
+```
+Status: BLOCKED
+Message: Global Grouter storage allowed read-only, but no linked connection exists
+Action: Run sync and link commands
+```
+
+**State C: READY (read-only with links)**
+```
+Status: READY
+Isolation check: WARN
+Message: Using global Grouter storage in explicit linked read-only mode
+Details: Found 6 existing connection(s). Linked connections: 1. Strict allowlist: enabled.
+```
+
+### Commands
+
+**1. List Grouter Connections**
+
+```bash
+maestro provider grouter list
+```
+
+Lists all connections in Grouter with masked emails:
+
+```
+Grouter connections
+  bd8020e4 | unknown | o*************@gmail.com | unknown
+  0c010b69 | unknown | (no email) | active
+Total: 6 connection(s)
+```
+
+**2. Sync Connections**
+
+```bash
+maestro provider grouter sync
+```
+
+Syncs connection metadata to Maestro state (no credentials copied):
+
+```
+Synced 6 Grouter connection ref(s).
+No credentials were copied.
+```
+
+**3. Link Connection**
+
+```bash
+maestro provider grouter link --connection <id> --provider kiro --label "Kiro principal"
+```
+
+Links a specific connection for Maestro use:
+
+```
+Linked Grouter connection: 0c010b69
+  Provider: kiro
+  Label: Kiro principal
+  Linked at: 2026-05-01T20:37:00.758Z
+Connection is now allowed for use by Maestro.
+```
+
+**4. Unlink Connection**
+
+```bash
+maestro provider grouter unlink --connection <id>
+```
+
+Removes permission for Maestro to use the connection (connection remains in Grouter).
+
+**5. Verify with Doctor**
+
+```bash
+maestro provider doctor --provider grouter
+```
+
+Checks configuration and linked connections.
+
+### Workflow
+
+**Initial Setup:**
+
+1. Ensure Grouter has Kiro connection (via dashboard or CLI)
+2. Update Maestro config: `allowGlobalStorageReadOnly: true`
+3. Sync connections: `maestro provider grouter sync`
+4. Link desired connection: `maestro provider grouter link --connection <id> --provider kiro`
+5. Verify: `maestro provider doctor --provider grouter`
+
+**Example:**
+
+```bash
+# List available connections
+maestro provider grouter list
+
+# Sync to Maestro state
+maestro provider grouter sync
+
+# Link Kiro connection
+maestro provider grouter link --connection 0c010b69 --provider kiro --label "Kiro principal"
+
+# Verify
+maestro provider doctor --provider grouter
+# Status: READY
+# Linked connections: 1
+```
+
+### Security
+
+**What is stored:**
+- Connection ID (e.g., `0c010b69`)
+- Provider name (e.g., `kiro`)
+- Masked email (e.g., `o*************@gmail.com`)
+- Label (e.g., `"Kiro principal"`)
+- Linked timestamp
+- Status (e.g., `active`)
+
+**What is NOT stored:**
+- Tokens
+- Refresh tokens
+- Raw auth output
+- Full email addresses (masked by default)
+- Credentials of any kind
+
+**Allowlist Enforcement:**
+
+When `strictConnectionAllowlist: true`:
+- Only connections in `linkedConnectionIds` can be used
+- Attempts to use other connections will be blocked
+- Provides audit trail of authorized connections
+
+### Privacy
+
+Email addresses are automatically masked:
+- `odachisamadesu@gmail.com` → `o*************@gmail.com`
+- `mmahtctqbq80@gmail.com` → `m*************@gmail.com`
+
+Masking preserves first character for identification while protecting privacy.
+
+### Important: Grouter Storage
+
+**Current Limitation:**
+
+Grouter uses global storage (`~/.grouter/grouter.db`) and does not support isolated storage via environment variables or CLI flags.
+
+**Maestro's Approach:**
+
+Instead of trying to isolate Grouter (not possible), Maestro:
+1. Accepts that Grouter storage is global
+2. Uses explicit linking to control which connections are allowed
+3. Never copies credentials
+4. Provides audit trail via `linkedConnectionIds`
+
+This is safer than duplicating authorization and maintains Grouter as the single source of truth for accounts.
+
+### Important: Grouter Storage (Continued)
+
 ### Important: Isolated Configuration
 
 **Maestro MUST NOT reuse Grouter configuration from other projects (e.g., Kofuku).**

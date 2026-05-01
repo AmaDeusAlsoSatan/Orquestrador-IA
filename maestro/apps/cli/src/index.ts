@@ -1658,8 +1658,8 @@ async function providerAuthStart(homeDir: string, args: string[]): Promise<void>
   const { flags } = parseFlags(args);
   const provider = getFlag(flags, "provider") || "kiro_cli";
 
-  if (provider !== "kiro_cli" && provider !== "kiro_openclaude" && provider !== "openclaude" && provider !== "anthropic") {
-    throw new Error(`Unsupported provider: ${provider}. Supported: kiro_cli, kiro_openclaude, openclaude, anthropic`);
+  if (provider !== "kiro_cli" && provider !== "kiro_openclaude" && provider !== "openclaude" && provider !== "anthropic" && provider !== "grouter_kiro") {
+    throw new Error(`Unsupported provider: ${provider}. Supported: kiro_cli, grouter_kiro, kiro_openclaude, openclaude, anthropic`);
   }
 
   console.log(`Starting authorization for provider: ${provider}\n`);
@@ -1667,6 +1667,12 @@ async function providerAuthStart(homeDir: string, args: string[]): Promise<void>
   // Handle kiro_cli with real device flow
   if (provider === "kiro_cli") {
     await startKiroCliAuth(homeDir);
+    return;
+  }
+
+  // Handle grouter_kiro with guidance
+  if (provider === "grouter_kiro") {
+    await startGrouterKiroAuth(homeDir);
     return;
   }
 
@@ -1700,6 +1706,48 @@ async function providerAuthStart(homeDir: string, args: string[]): Promise<void>
   console.log(`Auth session created: ${session.id}`);
   console.log(`Status: ${updatedSession.status}`);
   console.log(`\n❌ ${updatedSession.errorMessage}\n`);
+}
+
+async function startGrouterKiroAuth(homeDir: string): Promise<void> {
+  const state = await loadStateWithFriendlyError(homeDir);
+  const { loadGrouterConfig } = await import("@maestro/providers");
+  
+  const config = await loadGrouterConfig(homeDir);
+  
+  if (!config) {
+    throw new Error("Grouter config not found. Copy config/grouter.example.json to data/config/grouter.json");
+  }
+
+  // Check if Kiro connection is already linked
+  const kiroConnection = state.grouterConnections.find((c) => c.provider === "kiro" && c.label);
+
+  if (kiroConnection) {
+    console.log("✅ Kiro connection already linked.\n");
+    console.log(`Connection: ${kiroConnection.id}`);
+    console.log(`Label: ${kiroConnection.label}`);
+    console.log(`Linked at: ${kiroConnection.linkedAt}\n`);
+    console.log("No additional authorization needed.");
+    console.log("Grouter manages the Kiro account. Maestro references it via allowlist.");
+    return;
+  }
+
+  // No Kiro connection linked - show instructions
+  console.log("ℹ️  No Kiro connection linked to Maestro.\n");
+  console.log("Grouter manages Kiro authorization. Follow these steps:\n");
+  console.log("1. Open Grouter dashboard:");
+  console.log(`   ${config.dashboardUrl}\n`);
+  console.log("2. Add or confirm a Kiro connection:");
+  console.log("   - Click 'Add Provider'");
+  console.log("   - Select 'Kiro'");
+  console.log("   - Complete device code flow (AWS Builder ID)\n");
+  console.log("3. Sync connections to Maestro:");
+  console.log("   maestro provider grouter sync\n");
+  console.log("4. Link the Kiro connection:");
+  console.log("   maestro provider grouter link --connection <id> --provider kiro --label \"Kiro principal\"\n");
+  console.log("5. Verify:");
+  console.log("   maestro provider doctor --provider grouter\n");
+  console.log("This approach avoids duplicating authorization.");
+  console.log("Grouter is the single source of truth for accounts.");
 }
 
 async function startKiroCliAuth(homeDir: string): Promise<void> {

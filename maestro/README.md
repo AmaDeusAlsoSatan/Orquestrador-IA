@@ -1139,6 +1139,28 @@ The UI Run Console includes an **Agentes da Run** panel for preparing Supervisor
 
 Read the architecture notes in [docs/provider-runtime.md](docs/provider-runtime.md).
 
+### Grouter Account Linking
+
+Maestro can link to existing Grouter connections by ID without copying credentials. Grouter acts as the account vault/manager, and Maestro stores only safe references with explicit allowlist control.
+
+```bash
+# List Grouter connections
+maestro provider grouter list
+
+# Sync connection metadata (no credentials copied)
+maestro provider grouter sync
+
+# Link a specific connection
+maestro provider grouter link --connection <id> --provider kiro --label "Kiro principal"
+
+# Verify
+maestro provider doctor --provider grouter
+```
+
+Email addresses are automatically masked for privacy. Only connections in the allowlist can be used by Maestro.
+
+See [docs/provider-runtime.md](docs/provider-runtime.md) for complete documentation.
+
 ## Memory Consolidation / Active Context
 
 Maestro can consolidate the growing Vault into an operational memory layer. This keeps the current state easy to recover without depending on chat history or manually rereading every log.
