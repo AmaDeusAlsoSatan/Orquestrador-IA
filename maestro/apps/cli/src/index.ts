@@ -135,6 +135,16 @@ interface ParsedFlags {
   positionals: string[];
 }
 
+type ProviderTestVariant = "minimal" | "json" | "bare" | "no-session" | "current";
+
+interface CapturedCommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  errorMessage?: string;
+}
+
 const TASK_STATUS_ORDER: TaskStatus[] = ["TODO", "READY", "IN_PROGRESS", "REVIEW_NEEDED", "BLOCKED", "DONE", "CANCELLED"];
 const TASK_PRIORITY_ORDER: TaskPriority[] = ["URGENT", "HIGH", "MEDIUM", "LOW"];
 const HUMAN_DECISION_STATUSES: HumanDecisionStatus[] = ["APPROVED", "NEEDS_CHANGES", "REJECTED", "BLOCKED"];
@@ -1576,6 +1586,9 @@ async function providerTest(homeDir: string, args: string[]): Promise<void> {
   const provider = getFlag(flags, "provider");
   const prompt = getFlag(flags, "prompt");
   const confirm = getFlag(flags, "confirm");
+  const debug = Boolean(flags.debug);
+  const timeoutMs = parseTimeoutMs(getFlag(flags, "timeout-ms"), 300000);
+  const variant = parseProviderTestVariant(getFlag(flags, "variant") || "current");
 
   // Only openclaude_grouter is supported for now
   if (provider !== "openclaude_grouter") {
@@ -1593,6 +1606,9 @@ async function providerTest(homeDir: string, args: string[]): Promise<void> {
 
   console.log(`Running provider test for: ${provider}\n`);
   console.log(`Prompt: ${prompt}\n`);
+  console.log(`Variant: ${variant}`);
+  console.log(`Timeout: ${timeoutMs}ms`);
+  console.log(`Debug: ${debug ? "yes" : "no"}\n`);
 
   // Load config
   const configPath = path.join(homeDir, "data", "config", "openclaude-grouter.json");
@@ -1673,6 +1689,9 @@ async function providerTest(homeDir: string, args: string[]): Promise<void> {
     provider,
     prompt,
     model: config.model,
+    variant,
+    debug,
+    timeoutMs,
     linkedConnectionId: config.linkedConnectionId,
     baseUrl: config.baseUrl
   };
@@ -1682,16 +1701,7 @@ async function providerTest(homeDir: string, args: string[]): Promise<void> {
   await fs.writeFile(path.join(testDir, "01-prompt.md"), prompt, "utf8");
 
   // Execute OpenClaude
-  const execArgs = config.executableArgs ? [...config.executableArgs] : [];
-  execArgs.push(
-    "-p",
-    "--provider", "openai",
-    "--model", config.model,
-    "--output-format", "json",
-    "--bare",
-    "--no-session-persistence",
-    prompt
-  );
+  const execArgs = buildOpenClaudeGrouterArgs(config, prompt, variant);
 
   const env = {
     ...process.env,
@@ -1700,24 +1710,39 @@ async function providerTest(homeDir: string, args: string[]): Promise<void> {
 
   console.log(`Executing: ${config.executablePath} ${execArgs.join(" ")}\n`);
 
-  let stdout = "";
-  let stderr = "";
-  let exitCode = 0;
-  let error: Error | undefined;
-
-  try {
-    const result = await execFileAsync(config.executablePath, execArgs, {
-      timeout: config.timeoutMs || 300000,
+  if (debug) {
+    await writeProviderDebugArtifacts({
+      homeDir,
+      testDir,
+      config,
+      grouterConfig,
+      prompt,
+      variant,
+      commandArgs: execArgs,
       env,
-      cwd: config.workingDirectory
+      timeoutMs
     });
-    stdout = result.stdout;
-    stderr = result.stderr;
-  } catch (err: any) {
-    error = err;
-    stdout = err.stdout || "";
-    stderr = err.stderr || "";
-    exitCode = err.code || 1;
+  }
+
+  const commandResult = await runCapturedCommand(config.executablePath, execArgs, {
+    cwd: config.workingDirectory,
+    env,
+    timeoutMs
+  });
+  const stdout = sanitizeText(commandResult.stdout);
+  const stderr = sanitizeText(commandResult.stderr);
+  const exitCode = commandResult.exitCode;
+  const timedOut = commandResult.timedOut;
+  const status = timedOut ? "TIMEOUT" : commandResult.errorMessage || exitCode !== 0 ? "FAILED" : "SUCCESS";
+  const error = status === "SUCCESS" ? undefined : new Error(commandResult.errorMessage || status);
+
+  if (debug && grouterConfig?.executablePath) {
+    await writeCapturedCommandArtifact(
+      path.join(testDir, "15-grouter-serve-logs-after.txt"),
+      grouterConfig.executablePath,
+      ["serve", "logs"],
+      { timeoutMs: Math.min(timeoutMs, 10000), maxChars: 20000 }
+    );
   }
 
   // Save outputs
@@ -1751,7 +1776,15 @@ ${config.linkedConnectionId} (${connection.label || "no label"})
 
 ## Exit Code
 
-${exitCode}
+${exitCode === null ? "null" : exitCode}
+
+## Timeout
+
+${timedOut ? "yes" : "no"}
+
+## Variant
+
+${variant}
 
 ## Stdout
 
@@ -1767,9 +1800,21 @@ ${stderr}
 
 ## Status
 
-${error ? "❌ FAILED" : "✅ SUCCESS"}
+${status === "SUCCESS" ? "✅ SUCCESS" : status === "TIMEOUT" ? "TIMEOUT" : "❌ FAILED"}
 
-${error ? `### Error\n\n${error.message}` : ""}
+${commandResult.errorMessage ? `### Error\n\n${sanitizeText(commandResult.errorMessage)}` : ""}
+
+## Effective Status
+
+${status}
+
+## Debug
+
+${debug ? "enabled" : "disabled"}
+
+## Kofuku Auto Reference Detected
+
+${detectKofukuAutoReference([stdout, stderr]) ? "yes" : "no"}
 
 ## Test Directory
 
@@ -1780,8 +1825,9 @@ ${testDir}
 
   // Print result
   console.log("Test completed.\n");
-  console.log(`Exit code: ${exitCode}`);
-  console.log(`Status: ${error ? "FAILED" : "SUCCESS"}\n`);
+  console.log(`Exit code: ${exitCode === null ? "null" : exitCode}`);
+  console.log(`Status: ${status}`);
+  console.log(`Timeout: ${timedOut ? "yes" : "no"}\n`);
 
   if (stdout) {
     console.log("Stdout (first 500 chars):");
@@ -1808,12 +1854,387 @@ ${testDir}
   }
 }
 
+function parseProviderTestVariant(value: string): ProviderTestVariant {
+  const variants: ProviderTestVariant[] = ["minimal", "json", "bare", "no-session", "current"];
+  if (variants.includes(value as ProviderTestVariant)) {
+    return value as ProviderTestVariant;
+  }
+
+  throw new Error(`Invalid provider test variant: ${value}. Expected: ${variants.join(", ")}`);
+}
+
+function parseTimeoutMs(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid --timeout-ms value: ${value}`);
+  }
+
+  return Math.floor(parsed);
+}
+
+function buildOpenClaudeGrouterArgs(config: any, prompt: string, variant: ProviderTestVariant): string[] {
+  const execArgs = config.executableArgs ? [...config.executableArgs] : [];
+  execArgs.push("-p", "--provider", "openai", "--model", config.model);
+
+  if (variant === "json" || variant === "current") {
+    execArgs.push("--output-format", "json");
+  }
+
+  if (variant === "bare" || variant === "current") {
+    execArgs.push("--bare");
+  }
+
+  if (variant === "no-session" || variant === "current") {
+    execArgs.push("--no-session-persistence");
+  }
+
+  execArgs.push(prompt);
+  return execArgs;
+}
+
+async function writeProviderDebugArtifacts(options: {
+  homeDir: string;
+  testDir: string;
+  config: any;
+  grouterConfig: any;
+  prompt: string;
+  variant: ProviderTestVariant;
+  commandArgs: string[];
+  env: NodeJS.ProcessEnv;
+  timeoutMs: number;
+}): Promise<void> {
+  const { homeDir, testDir, config, grouterConfig, prompt, variant, commandArgs, env, timeoutMs } = options;
+  const openClaudeHome = resolveProviderRuntimePath(homeDir, config.env?.OPENCLAUDE_HOME);
+  const freshHome = path.join(homeDir, "data", "providers", "openclaude-grouter-debug-home", path.basename(testDir));
+
+  await fs.mkdir(openClaudeHome, { recursive: true }).catch(() => undefined);
+  await fs.mkdir(freshHome, { recursive: true }).catch(() => undefined);
+
+  await fs.writeFile(path.join(testDir, "05-command.txt"), sanitizeText(`${config.executablePath} ${commandArgs.join(" ")}`), "utf8");
+  await fs.writeFile(path.join(testDir, "06-env-sanitized.json"), `${JSON.stringify(sanitizeEnv(env), null, 2)}\n`, "utf8");
+
+  if (grouterConfig?.executablePath) {
+    await writeCapturedCommandArtifact(
+      path.join(testDir, "07-grouter-status.txt"),
+      grouterConfig.executablePath,
+      ["status"],
+      { timeoutMs }
+    );
+    await writeCapturedCommandArtifact(
+      path.join(testDir, "08-grouter-models.txt"),
+      grouterConfig.executablePath,
+      ["models"],
+      { timeoutMs }
+    );
+    await writeCapturedCommandArtifact(
+      path.join(testDir, "12-grouter-serve-logs-before.txt"),
+      grouterConfig.executablePath,
+      ["serve", "logs"],
+      { timeoutMs: Math.min(timeoutMs, 10000), maxChars: 20000 }
+    );
+  } else {
+    await fs.writeFile(path.join(testDir, "07-grouter-status.txt"), "Grouter executable not configured.\n", "utf8");
+    await fs.writeFile(path.join(testDir, "08-grouter-models.txt"), "Grouter executable not configured.\n", "utf8");
+  }
+
+  await fs.writeFile(path.join(testDir, "09-openclaude-home-tree.txt"), await renderDirectoryTree(openClaudeHome, 3, 120), "utf8");
+
+  const directRequest = buildDirectGrouterRequest(config, prompt);
+  await fs.writeFile(path.join(testDir, "10-direct-grouter-request.json"), `${JSON.stringify(directRequest.sanitizedRequest, null, 2)}\n`, "utf8");
+  const directResponse = await runDirectGrouterRequest(directRequest.url, directRequest.body, config.apiKey || config.env?.OPENAI_API_KEY || "any-value", timeoutMs);
+  await fs.writeFile(path.join(testDir, "11-direct-grouter-response.json"), `${JSON.stringify(directResponse, null, 2)}\n`, "utf8");
+
+  const freshEnv = {
+    ...env,
+    OPENCLAUDE_HOME: freshHome
+  };
+  const freshHelpArgs = config.executableArgs ? [...config.executableArgs, "--help"] : ["--help"];
+  await writeCapturedCommandArtifact(
+    path.join(testDir, "13-openclaude-fresh-home-help.txt"),
+    config.executablePath,
+    freshHelpArgs,
+    { cwd: config.workingDirectory, env: freshEnv, timeoutMs: Math.min(timeoutMs, 10000) }
+  );
+  await fs.writeFile(path.join(testDir, "14-openclaude-fresh-home-tree.txt"), await renderDirectoryTree(freshHome, 3, 120), "utf8");
+
+  if (grouterConfig?.executablePath) {
+    await writeCapturedCommandArtifact(
+      path.join(testDir, "15-grouter-serve-logs-after.txt"),
+      grouterConfig.executablePath,
+      ["serve", "logs"],
+      { timeoutMs: Math.min(timeoutMs, 10000), maxChars: 20000 }
+    );
+  }
+
+  const report = [
+    "# OpenClaude-Grouter Debug Artifacts",
+    "",
+    `Variant: ${variant}`,
+    `Timeout: ${timeoutMs}ms`,
+    `Configured OPENCLAUDE_HOME: ${config.env?.OPENCLAUDE_HOME || "not configured"}`,
+    `Resolved OPENCLAUDE_HOME: ${openClaudeHome}`,
+    `Fresh debug OPENCLAUDE_HOME: ${freshHome}`,
+    "",
+    "Artifacts:",
+    "- 05-command.txt",
+    "- 06-env-sanitized.json",
+    "- 07-grouter-status.txt",
+    "- 08-grouter-models.txt",
+    "- 09-openclaude-home-tree.txt",
+    "- 10-direct-grouter-request.json",
+    "- 11-direct-grouter-response.json",
+    "- 12-grouter-serve-logs-before.txt",
+    "- 13-openclaude-fresh-home-help.txt",
+    "- 14-openclaude-fresh-home-tree.txt",
+    "- 15-grouter-serve-logs-after.txt",
+    ""
+  ].join("\n");
+  await fs.writeFile(path.join(testDir, "16-debug-report.md"), report, "utf8");
+}
+
+async function writeCapturedCommandArtifact(
+  filePath: string,
+  command: string,
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number; maxChars?: number }
+): Promise<void> {
+  const result = await runCapturedCommand(command, args, options);
+  const output = renderCapturedCommandResult(command, args, result, options.maxChars);
+  await fs.writeFile(filePath, output, "utf8");
+}
+
+function runCapturedCommand(
+  command: string,
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }
+): Promise<CapturedCommandResult> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
+    });
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+      setTimeout(() => {
+        if (!settled) {
+          child.kill("SIGKILL");
+        }
+      }, 1500).unref();
+    }, options.timeoutMs);
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve({
+        stdout,
+        stderr,
+        exitCode: null,
+        timedOut,
+        errorMessage: error.message
+      });
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve({
+        stdout,
+        stderr,
+        exitCode: code,
+        timedOut,
+        errorMessage: timedOut ? `Command timed out after ${options.timeoutMs}ms` : undefined
+      });
+    });
+  });
+}
+
+function renderCapturedCommandResult(command: string, args: string[], result: CapturedCommandResult, maxChars = 50000): string {
+  const stdout = sanitizeText(result.stdout).slice(-maxChars);
+  const stderr = sanitizeText(result.stderr).slice(-maxChars);
+  return [
+    `Command: ${sanitizeText(`${command} ${args.join(" ")}`)}`,
+    `Exit code: ${result.exitCode === null ? "null" : result.exitCode}`,
+    `Timed out: ${result.timedOut ? "yes" : "no"}`,
+    `Error: ${result.errorMessage ? sanitizeText(result.errorMessage) : "none"}`,
+    "",
+    "STDOUT:",
+    stdout || "(empty)",
+    "",
+    "STDERR:",
+    stderr || "(empty)",
+    ""
+  ].join("\n");
+}
+
+function buildDirectGrouterRequest(config: any, prompt: string): {
+  url: string;
+  body: Record<string, unknown>;
+  sanitizedRequest: Record<string, unknown>;
+} {
+  const baseUrl = String(config.baseUrl || config.env?.OPENAI_BASE_URL || "").replace(/\/+$/u, "");
+  const url = `${baseUrl}/chat/completions`;
+  const body = {
+    model: config.model,
+    messages: [
+      {
+        role: "user",
+        content: prompt
+      }
+    ]
+  };
+
+  return {
+    url,
+    body,
+    sanitizedRequest: {
+      url,
+      method: "POST",
+      headers: {
+        authorization: "Bearer ***",
+        "content-type": "application/json"
+      },
+      body
+    }
+  };
+}
+
+async function runDirectGrouterRequest(
+  url: string,
+  body: Record<string, unknown>,
+  apiKey: string,
+  timeoutMs: number
+): Promise<Record<string, unknown>> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey || "any-value"}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const text = sanitizeText(await response.text());
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = undefined;
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      timedOut: false,
+      body: parsed ?? text
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      timedOut: error instanceof Error && error.name === "AbortError",
+      error: error instanceof Error ? sanitizeText(error.message) : sanitizeText(String(error))
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function sanitizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) continue;
+    sanitized[key] = shouldRedactKey(key) ? "***" : sanitizeText(value);
+  }
+  return sanitized;
+}
+
+function shouldRedactKey(key: string): boolean {
+  return /KEY|TOKEN|SECRET|PASSWORD|AUTH|COOKIE|SESSION/iu.test(key);
+}
+
+function sanitizeText(value: string): string {
+  return value
+    .replace(/Bearer\s+["']?[^"'\s]+/giu, "Bearer ***")
+    .replace(/(api[_-]?key["']?\s*[:=]\s*["']?)[^"',\s]+/giu, "$1***")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, (match) => {
+      const [name, domain] = match.split("@");
+      return `${name.slice(0, 1)}***@${domain}`;
+    });
+}
+
+function detectKofukuAutoReference(values: string[]): boolean {
+  return values.some((value) => value.toLowerCase().includes("kofuku-auto"));
+}
+
+function resolveProviderRuntimePath(homeDir: string, value: string | undefined): string {
+  if (!value) {
+    return path.join(homeDir, "data", "providers", "openclaude-grouter");
+  }
+
+  return path.isAbsolute(value) ? value : path.resolve(homeDir, value);
+}
+
+async function renderDirectoryTree(rootPath: string, maxDepth: number, maxEntries: number): Promise<string> {
+  const lines: string[] = [`Root: ${rootPath}`];
+  let count = 0;
+
+  async function visit(currentPath: string, depth: number): Promise<void> {
+    if (count >= maxEntries || depth > maxDepth) {
+      return;
+    }
+
+    const entries = await fs.readdir(currentPath, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (count >= maxEntries) {
+        lines.push("...truncated");
+        return;
+      }
+      const fullPath = path.join(currentPath, entry.name);
+      const relative = path.relative(rootPath, fullPath) || entry.name;
+      lines.push(`${"  ".repeat(depth)}- ${relative}${entry.isDirectory() ? "/" : ""}`);
+      count += 1;
+      if (entry.isDirectory()) {
+        await visit(fullPath, depth + 1);
+      }
+    }
+  }
+
+  await visit(rootPath, 0);
+  if (lines.length === 1) {
+    lines.push("(empty or unavailable)");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function printProviderHelp(): void {
   console.log(`Provider commands:
 
   maestro provider doctor [--provider grouter|openclaude|openclaude_grouter|kiro_cli]
   maestro provider discover [--provider grouter|openclaude|openclaude_grouter|kiro_cli]
-  maestro provider test --provider openclaude_grouter --prompt "<prompt>" --confirm RUN_PROVIDER_TEST
+  maestro provider test --provider openclaude_grouter --prompt "<prompt>" --confirm RUN_PROVIDER_TEST [--debug] [--timeout-ms <ms>] [--variant <minimal|json|bare|no-session|current>]
   maestro provider grouter list
   maestro provider grouter sync
   maestro provider grouter link --connection <id> --provider <provider> [--label <label>]

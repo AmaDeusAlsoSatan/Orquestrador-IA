@@ -577,6 +577,20 @@ The provider test command allows you to test OpenClaude via Grouter with a minim
 maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST
 ```
 
+Debug mode:
+
+```bash
+maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST --debug --timeout-ms 30000 --variant minimal
+```
+
+Supported variants:
+
+- `minimal`: `-p --provider openai --model <model> <prompt>`
+- `json`: `-p --provider openai --model <model> --output-format json <prompt>`
+- `bare`: `-p --provider openai --model <model> --bare <prompt>`
+- `no-session`: `-p --provider openai --model <model> --no-session-persistence <prompt>`
+- `current`: current full harness flags, including json, bare, and no-session
+
 ### Requirements
 
 **Explicit Confirmation:**
@@ -628,6 +642,23 @@ data/providers/openclaude-grouter/tests/<timestamp>/
   02-stdout.txt           # OpenClaude stdout
   03-stderr.txt           # OpenClaude stderr
   04-result.md            # Full test report
+```
+
+When `--debug` is enabled, additional files are saved:
+
+```text
+  05-command.txt
+  06-env-sanitized.json
+  07-grouter-status.txt
+  08-grouter-models.txt
+  09-openclaude-home-tree.txt
+  10-direct-grouter-request.json
+  11-direct-grouter-response.json
+  12-grouter-serve-logs-before.txt
+  13-openclaude-fresh-home-help.txt
+  14-openclaude-fresh-home-tree.txt
+  15-grouter-serve-logs-after.txt
+  16-debug-report.md
 ```
 
 **These files are NOT committed to git** (excluded via `.gitignore`).
@@ -733,6 +764,33 @@ Full result saved to: data/providers/openclaude-grouter/tests/2026-05-01T21-30-0
 - ✓ Outputs are not committed to git
 - ✓ Email addresses are masked in logs
 - ✓ No tokens are logged
+
+## Debugging OpenClaude-Grouter timeouts
+
+If the provider test hangs or times out, do not wire it into `AgentInvocation` yet. First isolate where the chain fails:
+
+```text
+Maestro -> OpenClaude -> Grouter -> Kiro
+```
+
+Use variants to identify flag-specific issues:
+
+```bash
+maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST --debug --timeout-ms 30000 --variant minimal
+maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST --debug --timeout-ms 30000 --variant json
+maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST --debug --timeout-ms 30000 --variant bare
+maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST --debug --timeout-ms 30000 --variant no-session
+maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST --debug --timeout-ms 30000 --variant current
+```
+
+How to read the results:
+
+- If `10-direct-grouter-request.json` / `11-direct-grouter-response.json` succeeds but OpenClaude times out, the problem is likely OpenClaude flags, config, or `OPENCLAUDE_HOME`.
+- If the direct Grouter request fails or times out, the problem is likely Grouter, the model name, endpoint compatibility, or the linked Kiro connection.
+- If `09-openclaude-home-tree.txt` or `14-openclaude-fresh-home-tree.txt` shows unexpected config/session files, verify OpenClaude is respecting the isolated `OPENCLAUDE_HOME`.
+- If outputs mention `kofuku-auto`, stop and investigate global config leakage before continuing.
+
+The harness kills timed-out processes and records partial stdout/stderr, so every failed run should still leave a usable report under `data/providers/openclaude-grouter/tests/<timestamp>/`.
 
 ### Next Steps After Successful Test
 
