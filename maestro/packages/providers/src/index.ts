@@ -4,6 +4,7 @@ export * from "./openclaude-doctor";
 export * from "./kiro-cli-doctor";
 export * from "./grouter-doctor";
 export * from "./grouter-connections";
+export * from "./openclaude-grouter-doctor";
 export * from "./auth-parser";
 export * from "./auth-session";
 

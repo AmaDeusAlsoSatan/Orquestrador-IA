@@ -114,6 +114,8 @@ import {
   discoverKiroCliProvider,
   doctorGrouterProvider,
   discoverGrouterProvider,
+  doctorOpenClaudeGrouterProvider,
+  discoverOpenClaudeGrouterProvider,
   listGrouterConnections,
   syncGrouterConnections,
   linkGrouterConnection,
@@ -1476,8 +1478,8 @@ async function providerDoctor(homeDir: string, args: string[]): Promise<void> {
   const { flags } = parseFlags(args);
   const provider = getFlag(flags, "provider") || "grouter";
 
-  if (provider !== "openclaude" && provider !== "kiro_cli" && provider !== "grouter") {
-    throw new Error(`Unsupported provider: ${provider}. Supported: openclaude, kiro_cli, grouter`);
+  if (provider !== "openclaude" && provider !== "kiro_cli" && provider !== "grouter" && provider !== "openclaude_grouter") {
+    throw new Error(`Unsupported provider: ${provider}. Supported: openclaude, kiro_cli, grouter, openclaude_grouter`);
   }
 
   console.log(`Running provider doctor for: ${provider}\n`);
@@ -1486,6 +1488,8 @@ async function providerDoctor(homeDir: string, args: string[]): Promise<void> {
     ? await doctorKiroCliProvider(homeDir)
     : provider === "grouter"
     ? await doctorGrouterProvider(homeDir)
+    : provider === "openclaude_grouter"
+    ? await doctorOpenClaudeGrouterProvider(homeDir)
     : await doctorOpenClaudeProvider(homeDir);
 
   console.log(`Provider: ${result.provider}`);
@@ -1515,8 +1519,8 @@ async function providerDiscover(homeDir: string, args: string[]): Promise<void> 
   const { flags } = parseFlags(args);
   const provider = getFlag(flags, "provider") || "grouter";
 
-  if (provider !== "openclaude" && provider !== "kiro_cli" && provider !== "grouter") {
-    throw new Error(`Unsupported provider: ${provider}. Supported: openclaude, kiro_cli, grouter`);
+  if (provider !== "openclaude" && provider !== "kiro_cli" && provider !== "grouter" && provider !== "openclaude_grouter") {
+    throw new Error(`Unsupported provider: ${provider}. Supported: openclaude, kiro_cli, grouter, openclaude_grouter`);
   }
 
   console.log(`Running provider discovery for: ${provider}\n`);
@@ -1525,6 +1529,8 @@ async function providerDiscover(homeDir: string, args: string[]): Promise<void> 
     ? await discoverKiroCliProvider(homeDir)
     : provider === "grouter"
     ? await discoverGrouterProvider(homeDir)
+    : provider === "openclaude_grouter"
+    ? await discoverOpenClaudeGrouterProvider(homeDir)
     : await discoverOpenClaudeProvider(homeDir);
 
   console.log(`Provider: ${result.provider}`);
@@ -1564,18 +1570,19 @@ async function providerDiscover(homeDir: string, args: string[]): Promise<void> 
 function printProviderHelp(): void {
   console.log(`Provider commands:
 
-  maestro provider doctor [--provider grouter|openclaude|kiro_cli]
-  maestro provider discover [--provider grouter|openclaude|kiro_cli]
+  maestro provider doctor [--provider grouter|openclaude|openclaude_grouter|kiro_cli]
+  maestro provider discover [--provider grouter|openclaude|openclaude_grouter|kiro_cli]
   maestro provider grouter list
   maestro provider grouter sync
   maestro provider grouter link --connection <id> --provider <provider> [--label <label>]
   maestro provider grouter unlink --connection <id>
-  maestro provider auth status [--provider kiro_cli]
-  maestro provider auth start [--provider kiro_cli]
+  maestro provider auth status [--provider kiro_cli|grouter_kiro]
+  maestro provider auth start [--provider kiro_cli|grouter_kiro]
   maestro provider auth poll --session <session-id>
   maestro provider auth cancel --session <session-id>
 
 Note: grouter is the PRIMARY provider path for Maestro.
+      openclaude_grouter uses OpenClaude with Grouter endpoint (recommended).
       kiro_cli is EXPERIMENTAL and may use global auth.
 `);
 }

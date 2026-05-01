@@ -25,3 +25,4 @@ data/providers/
 data/config/openclaude.json
 data/config/kiro-cli.json
 data/config/grouter.json
+data/config/openclaude-grouter.json

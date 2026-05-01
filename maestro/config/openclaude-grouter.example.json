@@ -1,0 +1,18 @@
+{
+  "executablePath": "node",
+  "executableArgs": ["C:\\Users\\YourUser\\AppData\\Roaming\\npm\\node_modules\\@gitlawb\\openclaude\\bin\\openclaude"],
+  "workingDirectory": "C:\\path\\to\\maestro",
+  "mode": "print",
+  "provider": "openai",
+  "baseUrl": "http://127.0.0.1:3099/v1",
+  "apiKey": "any-value",
+  "model": "",
+  "linkedConnectionId": "",
+  "timeoutMs": 300000,
+  "env": {
+    "OPENCLAUDE_HOME": "./data/providers/openclaude-grouter",
+    "OPENAI_BASE_URL": "http://127.0.0.1:3099/v1",
+    "OPENAI_API_KEY": "any-value"
+  },
+  "notes": "Copy to data/config/openclaude-grouter.json. Do not commit real config. This adapter uses OpenClaude with Grouter's OpenAI-compatible endpoint. Requires: 1) Grouter daemon running (grouter serve on), 2) Kiro connection linked in Maestro (maestro provider grouter link), 3) OpenClaude installed globally. The apiKey can be any value since Grouter handles auth via linked connection."
+}

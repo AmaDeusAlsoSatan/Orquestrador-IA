@@ -9,6 +9,21 @@ export interface OpenClaudeProviderConfig {
   notes?: string;
 }
 
+export interface OpenClaudeGrouterProviderConfig {
+  executablePath: string;
+  executableArgs?: string[];
+  workingDirectory: string;
+  mode: "print";
+  provider: "openai";
+  baseUrl: string;
+  apiKey: string;
+  model?: string;
+  linkedConnectionId: string;
+  timeoutMs: number;
+  env: Record<string, string>;
+  notes?: string;
+}
+
 export type ProviderAuthStatus =
   | "NOT_CONFIGURED"
   | "NOT_AUTHORIZED"
