@@ -1095,6 +1095,41 @@ In the Run Console:
 
 For finalized runs, the timeline is especially useful as it provides a complete audit trail without needing to open multiple artifact files. It shows the entire journey from preparation to final commit.
 
+## Agent Runtime / Provider Adapter Layer
+
+Maestro now has the first formal layer for treating Codex, Kiro, OpenClaude, and manual work as configurable company workers instead of loose external chats.
+
+Initialize default profiles:
+
+```bash
+corepack pnpm run maestro agents init-defaults
+```
+
+Inspect and update agents:
+
+```bash
+corepack pnpm run maestro agents list
+corepack pnpm run maestro agents show --agent cto-supervisor
+corepack pnpm run maestro agents update --agent full-stack-executor --provider kiro_openclaude --model best-coding-free
+```
+
+Prepare an invocation for a run:
+
+```bash
+corepack pnpm run maestro agent invoke --run <run-id> --role CTO_SUPERVISOR
+```
+
+The first runtime is intentionally safe:
+
+- `manual` and `codex_manual` create invocation prompt files and return `BLOCKED`, waiting for manual output.
+- `openclaude` and `kiro_openclaude` are safe stubs until an isolated Maestro OpenClaude runtime is configured.
+- Maestro does not reuse any OpenClaude config from another assistant.
+- Generated invocations live under `data/runs/<project>/<run>/agents/<invocation-id>/`.
+
+The UI Run Console includes an **Agentes da Run** panel for preparing Supervisor, Executor, and Reviewer invocations.
+
+Read the architecture notes in [docs/provider-runtime.md](docs/provider-runtime.md).
+
 ## Memory Consolidation / Active Context
 
 Maestro can consolidate the growing Vault into an operational memory layer. This keeps the current state easy to recover without depending on chat history or manually rereading every log.

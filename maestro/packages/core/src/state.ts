@@ -2,7 +2,18 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { makeUniqueId } from "./ids";
 import { getMaestroPaths, MAESTRO_STATE_VERSION } from "./paths";
-import type { HumanReviewDecision, MaestroState, PatchPromotion, Project, ProjectInput, ProjectTask, RunRecord, RunWorkspace } from "./types";
+import type {
+  AgentInvocation,
+  AgentProfile,
+  HumanReviewDecision,
+  MaestroState,
+  PatchPromotion,
+  Project,
+  ProjectInput,
+  ProjectTask,
+  RunRecord,
+  RunWorkspace
+} from "./types";
 
 export function createEmptyState(now = new Date().toISOString()): MaestroState {
   return {
@@ -13,6 +24,8 @@ export function createEmptyState(now = new Date().toISOString()): MaestroState {
     tasks: [],
     decisions: [],
     providerProfiles: [],
+    agentProfiles: [],
+    agentInvocations: [],
     agentAdapterProfiles: [],
     orchestrationWorkflows: [],
     runs: [],
@@ -30,6 +43,7 @@ export async function ensureStateFile(homeDir: string): Promise<{ state: Maestro
   await fs.mkdir(paths.logsDir, { recursive: true });
   await fs.mkdir(paths.runsDir, { recursive: true });
   await fs.mkdir(paths.workspacesDir, { recursive: true });
+  await fs.mkdir(paths.configDir, { recursive: true });
 
   if (await pathExists(paths.stateFile)) {
     return { state: await loadState(homeDir), created: false };
@@ -55,6 +69,8 @@ export async function loadState(homeDir: string): Promise<MaestroState> {
     tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
     decisions: Array.isArray(parsed.decisions) ? parsed.decisions.filter(isHumanReviewDecision) : [],
     providerProfiles: Array.isArray(parsed.providerProfiles) ? parsed.providerProfiles : [],
+    agentProfiles: Array.isArray(parsed.agentProfiles) ? parsed.agentProfiles.filter(isAgentProfile) : [],
+    agentInvocations: Array.isArray(parsed.agentInvocations) ? parsed.agentInvocations.filter(isAgentInvocation) : [],
     agentAdapterProfiles: Array.isArray(parsed.agentAdapterProfiles) ? parsed.agentAdapterProfiles : [],
     orchestrationWorkflows: Array.isArray(parsed.orchestrationWorkflows) ? parsed.orchestrationWorkflows : [],
     runs: Array.isArray(parsed.runs) ? parsed.runs : [],
@@ -149,6 +165,34 @@ export function upsertHumanReviewDecision(state: MaestroState, decision: HumanRe
   };
 }
 
+export function upsertAgentProfile(state: MaestroState, profile: AgentProfile): MaestroState {
+  const existingIndex = state.agentProfiles.findIndex((item) => item.id === profile.id);
+  const agentProfiles =
+    existingIndex >= 0
+      ? state.agentProfiles.map((item) => (item.id === profile.id ? profile : item))
+      : [...state.agentProfiles, profile];
+
+  return {
+    ...state,
+    updatedAt: new Date().toISOString(),
+    agentProfiles
+  };
+}
+
+export function upsertAgentInvocation(state: MaestroState, invocation: AgentInvocation): MaestroState {
+  const existingIndex = state.agentInvocations.findIndex((item) => item.id === invocation.id);
+  const agentInvocations =
+    existingIndex >= 0
+      ? state.agentInvocations.map((item) => (item.id === invocation.id ? invocation : item))
+      : [...state.agentInvocations, invocation];
+
+  return {
+    ...state,
+    updatedAt: new Date().toISOString(),
+    agentInvocations
+  };
+}
+
 export function upsertRunWorkspace(state: MaestroState, workspace: RunWorkspace): MaestroState {
   const existingIndex = state.workspaces.findIndex((item) => item.id === workspace.id);
   const workspaces =
@@ -231,6 +275,44 @@ function isHumanReviewDecision(value: unknown): value is HumanReviewDecision {
     typeof candidate.status === "string" &&
     typeof candidate.notes === "string" &&
     typeof candidate.decidedAt === "string"
+  );
+}
+
+function isAgentProfile(value: unknown): value is AgentProfile {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<AgentProfile>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.name === "string" &&
+    typeof candidate.role === "string" &&
+    typeof candidate.provider === "string" &&
+    typeof candidate.description === "string" &&
+    Array.isArray(candidate.responsibilities) &&
+    Array.isArray(candidate.allowedActions) &&
+    typeof candidate.createdAt === "string" &&
+    typeof candidate.updatedAt === "string"
+  );
+}
+
+function isAgentInvocation(value: unknown): value is AgentInvocation {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<AgentInvocation>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.runId === "string" &&
+    typeof candidate.projectId === "string" &&
+    typeof candidate.agentProfileId === "string" &&
+    typeof candidate.role === "string" &&
+    typeof candidate.provider === "string" &&
+    typeof candidate.stage === "string" &&
+    typeof candidate.inputPath === "string" &&
+    typeof candidate.status === "string"
   );
 }
 

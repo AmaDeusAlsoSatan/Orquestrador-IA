@@ -3,6 +3,12 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { URL } from "node:url";
 import {
+  DEFAULT_AGENT_MODEL_MAP,
+  createDefaultAgentProfiles,
+  prepareAgentInvocation,
+  type OpenClaudeAdapterConfig
+} from "@maestro/agents";
+import {
   createProject,
   ensureStateFile,
   getMaestroPaths,
@@ -10,6 +16,8 @@ import {
   resolveMaestroHome,
   saveState,
   slugify,
+  upsertAgentInvocation,
+  upsertAgentProfile,
   upsertHumanReviewDecision,
   upsertPatchPromotion,
   upsertProject,
@@ -18,6 +26,7 @@ import {
   upsertTask,
   upsertValidationRun,
   type HumanDecisionStatus,
+  type AgentRole,
   type HumanReviewDecision,
   type MaestroState,
   type PatchPromotion,
@@ -191,6 +200,8 @@ async function routeRequest(context: RequestContext): Promise<unknown> {
   const exactRoutes: Record<string, ApiHandler> = {
     "GET /api/health": getHealth,
     "GET /api/state": getState,
+    "GET /api/agents": getAgentsRoute,
+    "POST /api/agents/init-defaults": initAgentsRoute,
     "GET /api/projects": getProjects,
     "POST /api/projects": createProjectRoute,
     "POST /api/pilot": startPilotRoute
@@ -248,6 +259,8 @@ async function routeRunRequest(context: RequestContext): Promise<unknown> {
   if (method === "POST" && segments[3] === "action") return runControlledAction(context, runId);
   if (method === "POST" && segments[3] === "attach") return attachRunOutputRoute(context, runId);
   if (method === "POST" && segments[3] === "attach-commit") return attachCommitRoute(context, runId);
+  if (method === "GET" && segments[3] === "agents") return getRunAgentsRoute(context, runId);
+  if (method === "POST" && segments[3] === "agents" && segments[4] === "invoke") return invokeRunAgentRoute(context, runId);
   if (method === "GET" && segments[3] === "timeline") return getRunTimeline(context, runId);
   if (method === "GET" && segments[3] === "files") return getRunFile(context, runId, segments.slice(4).join("/"));
 
@@ -278,6 +291,32 @@ async function getHealth(context: RequestContext) {
 async function getState(context: RequestContext) {
   const { state } = await loadState(context.homeDir);
   return state;
+}
+
+async function getAgentsRoute(context: RequestContext) {
+  const { state } = await loadState(context.homeDir);
+  return {
+    agents: state.agentProfiles,
+    invocations: state.agentInvocations
+  };
+}
+
+async function initAgentsRoute(context: RequestContext) {
+  const { state } = await ensureStateFile(context.homeDir);
+  let nextState = state;
+  const profiles = createDefaultAgentProfiles();
+
+  for (const profile of profiles) {
+    const existing = nextState.agentProfiles.find((item) => item.id === profile.id);
+    nextState = upsertAgentProfile(nextState, existing ? { ...profile, createdAt: existing.createdAt } : profile);
+  }
+
+  await saveState(context.homeDir, nextState);
+  await ensureDefaultAgentModelMap(context.homeDir);
+
+  return {
+    agents: nextState.agentProfiles
+  };
 }
 
 async function getProjects(context: RequestContext) {
@@ -515,10 +554,43 @@ async function getRun(context: RequestContext, runId: string) {
     promotion,
     decision,
     validationRuns,
+    agentProfiles: getRunAgentProfiles(state, project.id),
+    agentInvocations: state.agentInvocations.filter((item) => item.runId === run.id).sort(byAgentInvocationTimeDesc),
     nextStep: nextActions[0]?.description || getNextRunStep(run),
     checklist,
     nextActions
   };
+}
+
+async function getRunAgentsRoute(context: RequestContext, runId: string) {
+  const { state } = await loadState(context.homeDir);
+  const run = getRunOrThrow(state, runId);
+  const project = getProjectOrThrow(state, run.projectId);
+
+  return {
+    agents: getRunAgentProfiles(state, project.id),
+    invocations: state.agentInvocations.filter((item) => item.runId === run.id).sort(byAgentInvocationTimeDesc)
+  };
+}
+
+async function invokeRunAgentRoute(context: RequestContext, runId: string) {
+  const body = asRecord(context.body);
+  const role = requireString(body.role, "role") as AgentRole;
+  const { state } = await loadState(context.homeDir);
+  const run = getRunOrThrow(state, runId);
+  const project = getProjectOrThrow(state, run.projectId);
+  const profile = getAgentProfileForRoleOrThrow(state, role, project.id);
+  const workspace = state.workspaces.find((item) => item.runId === run.id);
+  const result = await prepareAgentInvocation({
+    run,
+    project,
+    profile,
+    workspace,
+    openClaudeConfig: await readOpenClaudeRuntimeConfig(context.homeDir)
+  });
+
+  await saveState(context.homeDir, upsertAgentInvocation(state, result.invocation));
+  return result;
 }
 
 async function getRunTimeline(context: RequestContext, runId: string) {
@@ -907,6 +979,29 @@ async function getPilotNextRoute(context: RequestContext, projectId: string) {
 async function loadState(homeDir: string): Promise<{ state: MaestroState }> {
   await createProjectVaultIfNeeded(homeDir);
   return ensureStateFile(homeDir);
+}
+
+async function ensureDefaultAgentModelMap(homeDir: string): Promise<string> {
+  const modelMapPath = path.join(getMaestroPaths(homeDir).configDir, "agent-model-map.json");
+  const exists = await fs.stat(modelMapPath).then((stats) => stats.isFile()).catch(() => false);
+
+  await fs.mkdir(path.dirname(modelMapPath), { recursive: true });
+  if (!exists) {
+    await fs.writeFile(modelMapPath, `${JSON.stringify(DEFAULT_AGENT_MODEL_MAP, null, 2)}\n`, "utf8");
+  }
+
+  return modelMapPath;
+}
+
+async function readOpenClaudeRuntimeConfig(homeDir: string): Promise<OpenClaudeAdapterConfig | undefined> {
+  const configPath = path.join(getMaestroPaths(homeDir).configDir, "openclaude-runtime.json");
+  const content = await fs.readFile(configPath, "utf8").catch(() => undefined);
+
+  if (!content) {
+    return undefined;
+  }
+
+  return JSON.parse(content) as OpenClaudeAdapterConfig;
 }
 
 async function createProjectVaultIfNeeded(homeDir: string): Promise<void> {
@@ -1366,6 +1461,20 @@ function getRunOrThrow(state: MaestroState, runId: string): RunRecord {
   return run;
 }
 
+function getRunAgentProfiles(state: MaestroState, projectId: string) {
+  return state.agentProfiles.filter((profile) => !profile.projectIds || profile.projectIds.includes(projectId));
+}
+
+function getAgentProfileForRoleOrThrow(state: MaestroState, role: AgentRole, projectId: string) {
+  const profile = state.agentProfiles.find((item) => item.role === role && (!item.projectIds || item.projectIds.includes(projectId)));
+
+  if (!profile) {
+    throw new ApiError(404, `Agent profile not found for role ${role}. Run agents init-defaults first.`);
+  }
+
+  return profile;
+}
+
 function getTaskOrThrow(state: MaestroState, taskId: string): ProjectTask {
   const task = state.tasks.find((item) => item.id === taskId);
   if (!task) throw new ApiError(404, `Task not found: ${taskId}`);
@@ -1413,6 +1522,12 @@ function countBy<T>(items: T[], getKey: (item: T) => string): Record<string, num
 
 function byUpdatedAtDesc<T extends { updatedAt: string }>(left: T, right: T): number {
   return right.updatedAt.localeCompare(left.updatedAt);
+}
+
+function byAgentInvocationTimeDesc(left: { startedAt?: string; completedAt?: string }, right: { startedAt?: string; completedAt?: string }): number {
+  const leftTime = left.completedAt || left.startedAt || "";
+  const rightTime = right.completedAt || right.startedAt || "";
+  return rightTime.localeCompare(leftTime);
 }
 
 function byCreatedAtDesc<T extends { createdAt: string }>(left: T, right: T): number {

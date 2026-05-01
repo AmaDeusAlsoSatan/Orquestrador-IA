@@ -5,7 +5,13 @@ import path from "node:path";
 import * as process from "node:process";
 import { createInterface } from "node:readline/promises";
 import { promisify } from "node:util";
-import { AGENT_DEFINITIONS } from "@maestro/agents";
+import {
+  AGENT_DEFINITIONS,
+  DEFAULT_AGENT_MODEL_MAP,
+  createDefaultAgentProfiles,
+  prepareAgentInvocation,
+  type OpenClaudeAdapterConfig
+} from "@maestro/agents";
 
 const execFileAsync = promisify(execFile);
 import {
@@ -17,6 +23,8 @@ import {
   saveState,
   slugify,
   upsertHumanReviewDecision,
+  upsertAgentInvocation,
+  upsertAgentProfile,
   upsertPatchPromotion,
   upsertProject,
   upsertRun,
@@ -25,6 +33,9 @@ import {
   upsertValidationProfile,
   upsertValidationRun,
   type HumanDecisionStatus,
+  type AgentProfile,
+  type AgentProvider,
+  type AgentRole,
   type HumanReviewDecision,
   type MaestroState,
   type PatchPromotion,
@@ -123,6 +134,12 @@ async function main(): Promise<void> {
       case "smoke-test":
         await runSmokeTest(homeDir, parsed.rest);
         break;
+      case "agents":
+        await handleAgentsCommand(homeDir, parsed.rest);
+        break;
+      case "agent":
+        await handleAgentCommand(homeDir, parsed.rest);
+        break;
       case "pilot":
         await handlePilotCommand(homeDir, parsed.rest);
         break;
@@ -174,6 +191,146 @@ async function initMaestro(homeDir: string): Promise<void> {
   console.log(`Vault: ${paths.vaultDir}`);
   console.log(`Logs: ${paths.logsDir}`);
   console.log(`Agent roles: ${AGENT_DEFINITIONS.map((agent) => agent.role).join(", ")}`);
+}
+
+async function handleAgentsCommand(homeDir: string, args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+
+  switch (subcommand) {
+    case "init-defaults":
+      await initDefaultAgentsCommand(homeDir);
+      break;
+    case "list":
+      await listAgentsCommand(homeDir);
+      break;
+    case "show":
+      await showAgentCommand(homeDir, rest);
+      break;
+    case "update":
+      await updateAgentCommand(homeDir, rest);
+      break;
+    case "help":
+    case "--help":
+    case "-h":
+    case undefined:
+      printAgentsHelp();
+      break;
+    default:
+      throw new Error(`Unknown agents command: ${subcommand}`);
+  }
+}
+
+async function handleAgentCommand(homeDir: string, args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+
+  switch (subcommand) {
+    case "invoke":
+      await invokeAgentCommand(homeDir, rest);
+      break;
+    case "help":
+    case "--help":
+    case "-h":
+    case undefined:
+      printAgentHelp();
+      break;
+    default:
+      throw new Error(`Unknown agent command: ${subcommand}`);
+  }
+}
+
+async function initDefaultAgentsCommand(homeDir: string): Promise<void> {
+  const { state } = await ensureStateFile(homeDir);
+  const profiles = createDefaultAgentProfiles();
+  let nextState = state;
+
+  for (const profile of profiles) {
+    const existing = nextState.agentProfiles.find((item) => item.id === profile.id);
+    nextState = upsertAgentProfile(nextState, existing ? { ...profile, createdAt: existing.createdAt } : profile);
+  }
+
+  await saveState(homeDir, nextState);
+  const modelMapPath = await ensureDefaultAgentModelMap(homeDir);
+
+  console.log("Default agent profiles initialized.");
+  console.log(`Profiles: ${profiles.map((profile) => profile.id).join(", ")}`);
+  console.log(`Model map: ${modelMapPath}`);
+  console.log("");
+  console.log("OpenClaude isolation:");
+  console.log("Maestro will not reuse your assistant's OpenClaude config. Configure a dedicated Maestro OpenClaude profile later.");
+}
+
+async function listAgentsCommand(homeDir: string): Promise<void> {
+  const state = await loadStateWithFriendlyError(homeDir);
+
+  if (state.agentProfiles.length === 0) {
+    console.log("No agent profiles found. Run: maestro agents init-defaults");
+    return;
+  }
+
+  console.log("Agent profiles:\n");
+  for (const profile of state.agentProfiles) {
+    console.log(`${profile.id} | ${profile.role} | ${profile.provider} | ${profile.model || "no model"}`);
+    console.log(`  ${profile.name} - ${profile.description}`);
+  }
+}
+
+async function showAgentCommand(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const agentId = getRequiredFlag(flags, "agent");
+  const state = await loadStateWithFriendlyError(homeDir);
+  const profile = findAgentProfileOrThrow(state.agentProfiles, agentId);
+  const invocations = state.agentInvocations.filter((item) => item.agentProfileId === profile.id).slice(-5);
+
+  console.log(JSON.stringify({ profile, recentInvocations: invocations }, null, 2));
+}
+
+async function updateAgentCommand(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const agentId = getRequiredFlag(flags, "agent");
+  const provider = getFlag(flags, "provider");
+  const model = getFlag(flags, "model");
+  const state = await loadStateWithFriendlyError(homeDir);
+  const profile = findAgentProfileOrThrow(state.agentProfiles, agentId);
+  const nextProfile: AgentProfile = {
+    ...profile,
+    provider: provider ? parseAgentProvider(provider) : profile.provider,
+    model: model ?? profile.model,
+    updatedAt: new Date().toISOString()
+  };
+
+  await saveState(homeDir, upsertAgentProfile(state, nextProfile));
+  console.log(`Agent updated: ${nextProfile.id}`);
+  console.log(`Provider: ${nextProfile.provider}`);
+  console.log(`Model: ${nextProfile.model || "not set"}`);
+}
+
+async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const runId = getRequiredFlag(flags, "run");
+  const role = parseAgentRole(getRequiredFlag(flags, "role"));
+  const state = await loadStateWithFriendlyError(homeDir);
+  const run = findRunOrThrow(state.runs, runId);
+  const project = findProjectForRunOrThrow(state.projects, run);
+  const profile = findAgentProfileForRoleOrThrow(state.agentProfiles, role, project.id);
+  const workspace = findWorkspaceForRun(state.workspaces, run.id);
+  const result = await prepareAgentInvocation({
+    run,
+    project,
+    profile,
+    workspace,
+    openClaudeConfig: await readOpenClaudeRuntimeConfig(homeDir)
+  });
+
+  await saveState(homeDir, upsertAgentInvocation(state, result.invocation));
+  console.log(`Agent invocation prepared: ${result.invocation.id}`);
+  console.log(`Role: ${result.invocation.role}`);
+  console.log(`Provider: ${result.invocation.provider}`);
+  console.log(`Status: ${result.invocation.status}`);
+  console.log(`Prompt: ${result.promptPath}`);
+  console.log(`Output: ${result.outputPath}`);
+  if (result.invocation.errorMessage) {
+    console.log(`Error: ${result.invocation.errorMessage}`);
+  }
 }
 
 async function handleProjectCommand(homeDir: string, args: string[]): Promise<void> {
@@ -3082,6 +3239,82 @@ function findWorkspaceForRun(workspaces: RunWorkspace[], runId: string): RunWork
   return workspaces.find((workspace) => workspace.runId === runId);
 }
 
+function findAgentProfileOrThrow(profiles: AgentProfile[], agentId: string): AgentProfile {
+  const profile = profiles.find((item) => item.id === agentId);
+
+  if (!profile) {
+    throw new Error(`Agent profile not found: ${agentId}. Run: maestro agents init-defaults`);
+  }
+
+  return profile;
+}
+
+function findAgentProfileForRoleOrThrow(profiles: AgentProfile[], role: AgentRole, projectId: string): AgentProfile {
+  const profile = profiles.find((item) => item.role === role && (!item.projectIds || item.projectIds.includes(projectId)));
+
+  if (!profile) {
+    throw new Error(`Agent profile not found for role ${role}. Run: maestro agents init-defaults`);
+  }
+
+  return profile;
+}
+
+function parseAgentProvider(value: string): AgentProvider {
+  const allowed: AgentProvider[] = ["manual", "openclaude", "codex_manual", "kiro_openclaude"];
+
+  if (allowed.includes(value as AgentProvider)) {
+    return value as AgentProvider;
+  }
+
+  throw new Error(`Invalid provider: ${value}. Allowed: ${allowed.join(", ")}`);
+}
+
+function parseAgentRole(value: string): AgentRole {
+  const allowed: AgentRole[] = [
+    "CEO",
+    "CTO",
+    "FULL_STACK_DEV",
+    "QA",
+    "MEMORY",
+    "CTO_SUPERVISOR",
+    "FULL_STACK_EXECUTOR",
+    "CODE_REVIEWER",
+    "QA_VALIDATOR"
+  ];
+
+  if (allowed.includes(value as AgentRole)) {
+    return value as AgentRole;
+  }
+
+  throw new Error(`Invalid role: ${value}. Allowed: ${allowed.join(", ")}`);
+}
+
+async function ensureDefaultAgentModelMap(homeDir: string): Promise<string> {
+  const paths = getMaestroPaths(homeDir);
+  const configDir = paths.configDir;
+  const modelMapPath = path.join(configDir, "agent-model-map.json");
+  const exists = await fs.stat(modelMapPath).then((stats) => stats.isFile()).catch(() => false);
+
+  await fs.mkdir(configDir, { recursive: true });
+
+  if (!exists) {
+    await fs.writeFile(modelMapPath, `${JSON.stringify(DEFAULT_AGENT_MODEL_MAP, null, 2)}\n`, "utf8");
+  }
+
+  return modelMapPath;
+}
+
+async function readOpenClaudeRuntimeConfig(homeDir: string): Promise<OpenClaudeAdapterConfig | undefined> {
+  const configPath = path.join(getMaestroPaths(homeDir).configDir, "openclaude-runtime.json");
+  const content = await fs.readFile(configPath, "utf8").catch(() => undefined);
+
+  if (!content) {
+    return undefined;
+  }
+
+  return JSON.parse(content) as OpenClaudeAdapterConfig;
+}
+
 function getWorkspaceStatusFromGit(workspace: RunWorkspace, gitState: Awaited<ReturnType<typeof inspectRunWorkspace>>): WorkspaceStatus {
   if (!gitState.isGitRepo) {
     return "MISSING";
@@ -3482,6 +3715,11 @@ Usage:
   maestro doctor
   maestro doctor --project <id>
   maestro smoke-test [--keep] [--verbose]
+  maestro agents init-defaults
+  maestro agents list
+  maestro agents show --agent <id>
+  maestro agents update --agent <id> [--provider <provider>] [--model <model>]
+  maestro agent invoke --run <id> --role <role>
   maestro project add [--name <name>] [--repo-path <path>] [--description <text>] [--stack <a,b>] [--status <status>] [--priority <priority>]
   maestro project list
   maestro project show <id>
@@ -3531,6 +3769,23 @@ Usage:
   maestro memory refresh --project <id>
   maestro memory brief --project <id>
   maestro memory checkpoint --project <id> --notes <notes>
+`);
+}
+
+function printAgentsHelp(): void {
+  console.log(`Agent profile commands:
+
+  maestro agents init-defaults
+  maestro agents list
+  maestro agents show --agent <id>
+  maestro agents update --agent <id> [--provider <manual|openclaude|codex_manual|kiro_openclaude>] [--model <model>]
+`);
+}
+
+function printAgentHelp(): void {
+  console.log(`Agent invocation commands:
+
+  maestro agent invoke --run <id> --role <CEO|CTO_SUPERVISOR|FULL_STACK_EXECUTOR|CODE_REVIEWER|QA_VALIDATOR>
 `);
 }
 

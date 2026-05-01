@@ -24,6 +24,13 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     enabled: false
   },
   {
+    role: "CTO_SUPERVISOR",
+    title: "CTO Supervisor",
+    purpose: "Plan work for execution agents and define acceptance criteria.",
+    defaultFocus: ["context", "technical plan", "risk", "acceptance criteria"],
+    enabled: false
+  },
+  {
     role: "FULL_STACK_DEV",
     title: "Full Stack Developer",
     purpose: "Implement product changes across frontend, backend, and tooling.",
@@ -31,10 +38,31 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     enabled: false
   },
   {
+    role: "FULL_STACK_EXECUTOR",
+    title: "Full Stack Executor",
+    purpose: "Execute approved plans inside isolated workspaces.",
+    defaultFocus: ["workspace edits", "scope control", "execution report"],
+    enabled: false
+  },
+  {
+    role: "CODE_REVIEWER",
+    title: "Code Reviewer",
+    purpose: "Review executor output against the real diff and approved plan.",
+    defaultFocus: ["diff review", "regression risk", "approval verdict"],
+    enabled: false
+  },
+  {
     role: "QA",
     title: "QA",
     purpose: "Find regressions, define acceptance checks, and keep quality visible.",
     defaultFocus: ["tests", "edge cases", "release confidence"],
+    enabled: false
+  },
+  {
+    role: "QA_VALIDATOR",
+    title: "QA Validator",
+    purpose: "Run local validation profiles and classify failures.",
+    defaultFocus: ["validation", "environment failures", "quality signal"],
     enabled: false
   },
   {

@@ -6,6 +6,7 @@ export const VAULT_DIR_NAME = "vault";
 export const LOGS_DIR_NAME = "logs";
 export const RUNS_DIR_NAME = "runs";
 export const WORKSPACES_DIR_NAME = "workspaces";
+export const CONFIG_DIR_NAME = "config";
 export const STATE_FILE_NAME = "maestro.json";
 
 export interface MaestroPaths {
@@ -17,6 +18,7 @@ export interface MaestroPaths {
   logsDir: string;
   runsDir: string;
   workspacesDir: string;
+  configDir: string;
   stateFile: string;
 }
 
@@ -38,6 +40,7 @@ export function getMaestroPaths(homeDir: string): MaestroPaths {
     logsDir: path.join(dataDir, LOGS_DIR_NAME),
     runsDir: path.join(dataDir, RUNS_DIR_NAME),
     workspacesDir: path.join(dataDir, WORKSPACES_DIR_NAME),
+    configDir: path.join(dataDir, CONFIG_DIR_NAME),
     stateFile: path.join(dataDir, STATE_FILE_NAME)
   };
 }

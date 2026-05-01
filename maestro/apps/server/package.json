@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@maestro/agents": "workspace:*",
     "@maestro/core": "workspace:*",
     "@maestro/memory": "workspace:*",
     "@maestro/runner": "workspace:*"

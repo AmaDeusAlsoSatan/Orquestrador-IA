@@ -32,6 +32,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@maestro/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@maestro/core':
         specifier: workspace:*
         version: link:../../packages/core

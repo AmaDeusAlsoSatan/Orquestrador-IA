@@ -11,5 +11,9 @@ data/logs/*
 !data/logs/.gitkeep
 data/runs/*
 !data/runs/.gitkeep
+data/workspaces/*
+!data/workspaces/.gitkeep
+data/config/*
+!data/config/.gitkeep
 data/vault/projects/*
 !data/vault/projects/.gitkeep

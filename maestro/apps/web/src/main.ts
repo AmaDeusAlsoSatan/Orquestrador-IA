@@ -76,6 +76,33 @@ interface RunDetail {
   workspace?: { workspacePath: string; status: string };
   promotion?: { status: string; patchPath: string };
   decision?: { status: string; notes: string };
+  agentProfiles?: AgentProfile[];
+  agentInvocations?: AgentInvocation[];
+}
+
+interface AgentProfile {
+  id: string;
+  name: string;
+  role: string;
+  provider: string;
+  model?: string;
+  description: string;
+}
+
+interface AgentInvocation {
+  id: string;
+  runId: string;
+  projectId: string;
+  agentProfileId: string;
+  role: string;
+  provider: string;
+  stage: string;
+  inputPath: string;
+  outputPath?: string;
+  status: string;
+  startedAt?: string;
+  completedAt?: string;
+  errorMessage?: string;
 }
 
 interface ActionLogEntry {
@@ -343,7 +370,7 @@ function renderCeoCommandCenter(): string {
     <section class="section-title">
       <div>
         <h1>CEO Command Center</h1>
-        <p>Este MVP ainda nao chama LLM. Toda mensagem vira uma task rastreavel.</p>
+        <p>Este MVP ainda nao chama LLM automaticamente. O pedido humano vira task/run, e o painel de agentes prepara as invocacoes formais.</p>
       </div>
     </section>
     <div class="split">
@@ -360,8 +387,8 @@ function renderCeoCommandCenter(): string {
       </form>
       <div class="card">
         <h3>Fluxo gerado</h3>
-        <p>O CEO simulado cria uma task com tag <code>ceo-request</code>. Depois voce prepara a run, copia prompts e anexa respostas pela tela de run.</p>
-        <p class="muted">Isso mantem a conversa presa a task/run, em vez de virar chat solto.</p>
+        <p>O CEO simulado cria uma task com tag <code>ceo-request</code>. Depois voce prepara a run e usa o painel <strong>Agentes da Run</strong> para preparar Supervisor, Executor e Reviewer.</p>
+        <p class="muted">Isso mantem a conversa presa a task/run e prepara o caminho para OpenClaude/Kiro isolados.</p>
       </div>
     </div>
   `;
@@ -507,6 +534,7 @@ function renderSelectedRun(): string {
       ${renderWorkspacePanel(detail)}
       <h3>Checklist</h3>
       <div class="checklist">${detail.checklist.map((item) => `<div class="check"><span class="dot ${item.done ? "done" : ""}">${item.done ? "✓" : ""}</span>${escapeHtml(item.label)}</div>`).join("")}</div>
+      ${renderAgentPanel(detail)}
       ${renderTimelineSection(detail)}
       ${isFinalized ? "" : `
         <h3>Acoes</h3>
@@ -679,6 +707,54 @@ function renderTimelineSection(detail: RunDetail): string {
         <button data-command="load-timeline">Carregar Timeline</button>
       </div>
       ${state.timeline ? renderTimeline(state.timeline) : `<div class="empty">Clique em "Carregar Timeline" para ver os eventos da run.</div>`}
+    </div>
+  `;
+}
+
+function renderAgentPanel(detail: RunDetail): string {
+  const roles = ["CTO_SUPERVISOR", "FULL_STACK_EXECUTOR", "CODE_REVIEWER"];
+  const profiles = detail.agentProfiles || [];
+  const invocations = detail.agentInvocations || [];
+
+  if (profiles.length === 0) {
+    return `
+      <div style="margin-top: 1rem;">
+        <h3>Agentes da Run</h3>
+        <div class="empty">Nenhum perfil de agente configurado. Rode <code>maestro agents init-defaults</code>.</div>
+      </div>
+    `;
+  }
+
+  return `
+    <div style="margin-top: 1rem;">
+      <h3>Agentes da Run</h3>
+      <div class="list">
+        ${roles.map((role) => {
+          const profile = profiles.find((item) => item.role === role);
+          const latest = invocations.find((item) => item.role === role);
+
+          if (!profile) {
+            return `<div class="item"><strong>${escapeHtml(role)}</strong><p class="muted">Perfil nao configurado.</p></div>`;
+          }
+
+          return `
+            <div class="item">
+              <div class="item-header">
+                <div>
+                  <p class="item-title">${escapeHtml(profile.name)}</p>
+                  <p class="item-subtitle">${escapeHtml(profile.role)} | ${escapeHtml(profile.provider)} | ${escapeHtml(profile.model || "sem modelo")}</p>
+                </div>
+                <span class="badge ${latest?.status === "SUCCEEDED" ? "ok" : latest?.status === "FAILED" ? "danger" : latest?.status === "BLOCKED" ? "warn" : ""}">${escapeHtml(latest?.status || "sem invocation")}</span>
+              </div>
+              <p>${escapeHtml(profile.description)}</p>
+              ${latest ? `<p class="muted">Ultima invocation: ${escapeHtml(latest.id)}</p>` : ""}
+              <div class="button-row" style="margin-top: 0.75rem;">
+                <button data-agent-invoke="${escapeHtml(profile.role)}">Preparar invocacao</button>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
     </div>
   `;
 }
@@ -882,6 +958,11 @@ async function handleClick(event: Event): Promise<void> {
 
   if (button.dataset.runAction) {
     await executeRunAction(button.dataset.runAction);
+    return;
+  }
+
+  if (button.dataset.agentInvoke) {
+    await invokeAgent(button.dataset.agentInvoke);
     return;
   }
 
@@ -1100,6 +1181,18 @@ async function executeRunAction(action: string): Promise<void> {
     pushActionLog(action, "OK", "Acao executada pela API local.", result);
     await refreshProjectData();
   }, `${action} concluido.`);
+}
+
+async function invokeAgent(role: string): Promise<void> {
+  if (!state.selectedRunId) return;
+  await runBusy(async () => {
+    const result = await api(`/api/runs/${state.selectedRunId}/agents/invoke`, {
+      method: "POST",
+      body: { role }
+    });
+    pushActionLog(`AGENT_${role}`, "OK", "Invocacao de agente preparada.", result);
+    await refreshProjectData();
+  }, `Invocacao preparada para ${role}.`);
 }
 
 async function prepareKiroExecution(): Promise<void> {

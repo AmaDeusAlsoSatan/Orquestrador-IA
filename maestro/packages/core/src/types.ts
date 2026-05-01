@@ -2,11 +2,31 @@ export type ProjectStatus = "idea" | "active" | "paused" | "archived" | "mainten
 
 export type ProjectPriority = "low" | "medium" | "high" | "critical";
 
-export type AgentRole = "CEO" | "CTO" | "FULL_STACK_DEV" | "QA" | "MEMORY";
+export type AgentRole =
+  | "CEO"
+  | "CTO"
+  | "FULL_STACK_DEV"
+  | "QA"
+  | "MEMORY"
+  | "CTO_SUPERVISOR"
+  | "FULL_STACK_EXECUTOR"
+  | "CODE_REVIEWER"
+  | "QA_VALIDATOR";
 
 export type AgentAdapterType = "CODEX_SUPERVISOR" | "KIRO_EXECUTOR" | "OPENCLAUDE_EXECUTOR" | "LOCAL_LLM" | "MANUAL";
 
 export type AgentAdapterRole = "SUPERVISOR" | "EXECUTOR" | "REVIEWER" | "MEMORY_MANAGER";
+
+export type AgentProvider = "manual" | "openclaude" | "codex_manual" | "kiro_openclaude";
+
+export type AgentRunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "BLOCKED";
+
+export type AgentInvocationStage =
+  | "CEO_INTAKE"
+  | "SUPERVISOR_PLAN"
+  | "EXECUTOR_IMPLEMENT"
+  | "REVIEWER_REVIEW"
+  | "QA_VALIDATE";
 
 export type TaskStatus = "TODO" | "READY" | "IN_PROGRESS" | "REVIEW_NEEDED" | "DONE" | "BLOCKED" | "CANCELLED";
 
@@ -101,6 +121,36 @@ export interface AgentAdapterProfile {
   config: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AgentProfile {
+  id: string;
+  name: string;
+  role: AgentRole;
+  provider: AgentProvider;
+  model?: string;
+  description: string;
+  responsibilities: string[];
+  allowedActions: string[];
+  projectIds?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentInvocation {
+  id: string;
+  runId: string;
+  projectId: string;
+  agentProfileId: string;
+  role: AgentRole;
+  provider: AgentProvider;
+  stage: AgentInvocationStage;
+  inputPath: string;
+  outputPath?: string;
+  status: AgentRunStatus;
+  startedAt?: string;
+  completedAt?: string;
+  errorMessage?: string;
 }
 
 export interface WorkflowStep {
@@ -264,6 +314,8 @@ export interface MaestroState {
   tasks: ProjectTask[];
   decisions: HumanReviewDecision[];
   providerProfiles: ProviderProfile[];
+  agentProfiles: AgentProfile[];
+  agentInvocations: AgentInvocation[];
   agentAdapterProfiles: AgentAdapterProfile[];
   orchestrationWorkflows: OrchestrationWorkflow[];
   runs: RunRecord[];
