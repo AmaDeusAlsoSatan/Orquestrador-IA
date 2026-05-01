@@ -23,7 +23,8 @@ export async function createContextPack(
   homeDir: string,
   project: Project,
   tasks: ProjectTask[] = [],
-  decisions: HumanReviewDecision[] = []
+  decisions: HumanReviewDecision[] = [],
+  runs: Array<{ id: string; goal: string; status: string; finalizedAt?: string; finalCommit?: { sha: string; message: string; recordedAt: string } }> = []
 ): Promise<{ contextPackPath: string; includedFiles: string[] }> {
   const paths = getMaestroPaths(homeDir);
   const projectVaultDir = path.join(paths.projectsVaultDir, project.id);
@@ -42,6 +43,7 @@ export async function createContextPack(
 
   sections.push(`# Active Context Atual`, "", await readActiveContextForContextPack(homeDir, project), "");
   sections.push(renderTaskBoardForContextPack(tasks, decisions).trimEnd(), "");
+  sections.push(renderCompletedDeliveriesForContextPack(runs).trimEnd(), "");
   sections.push(renderHumanDecisionsForContextPack(decisions).trimEnd(), "");
 
   for (const fileName of CONTEXT_PACK_INPUT_FILES) {
@@ -64,6 +66,33 @@ export async function createContextPack(
     contextPackPath,
     includedFiles
   };
+}
+
+function renderCompletedDeliveriesForContextPack(runs: Array<{ id: string; goal: string; status: string; finalizedAt?: string; finalCommit?: { sha: string; message: string; recordedAt: string } }>): string {
+  const completedRuns = runs
+    .filter((run) => run.status === "FINALIZED")
+    .sort((left, right) => (right.finalizedAt || "").localeCompare(left.finalizedAt || ""))
+    .slice(0, 5);
+
+  const sections = ["# Últimas Entregas Concluídas", ""];
+
+  if (completedRuns.length === 0) {
+    sections.push("- Nenhuma entrega concluída ainda.", "");
+    return sections.join("\n");
+  }
+
+  for (const run of completedRuns) {
+    const finalizedDate = run.finalizedAt ? new Date(run.finalizedAt).toLocaleDateString("pt-BR") : "N/A";
+    const commit = run.finalCommit ? `${run.finalCommit.sha.slice(0, 7)} - ${run.finalCommit.message}` : "não registrado";
+    
+    sections.push(`- **Run:** ${run.id}`);
+    sections.push(`  - **Goal:** ${truncate(run.goal, 120)}`);
+    sections.push(`  - **Finalizada em:** ${finalizedDate}`);
+    sections.push(`  - **Commit:** ${commit}`);
+    sections.push("");
+  }
+
+  return sections.join("\n");
 }
 
 function renderHumanDecisionsForContextPack(decisions: HumanReviewDecision[]): string {

@@ -908,7 +908,13 @@ async function pilotStartCommand(homeDir: string, args: string[]): Promise<void>
 
   // Create context pack
   console.log("Creating context pack...");
-  await createContextPack(homeDir, project, state2.tasks.filter((t) => t.projectId === project.id));
+  await createContextPack(
+    homeDir,
+    project,
+    state2.tasks.filter((t) => t.projectId === project.id),
+    state2.decisions.filter((d) => d.projectId === project.id),
+    state2.runs.filter((r) => r.projectId === project.id)
+  );
   console.log("✓ Context pack created\n");
 
   // Detect validation if not already done
@@ -1317,7 +1323,8 @@ async function packContext(homeDir: string, args: string[]): Promise<void> {
     homeDir,
     project,
     state.tasks.filter((task) => task.projectId === project.id),
-    state.decisions.filter((decision) => decision.projectId === project.id)
+    state.decisions.filter((decision) => decision.projectId === project.id),
+    state.runs.filter((run) => run.projectId === project.id)
   );
 
   console.log(`Context pack created for project: ${project.id}`);
@@ -4043,7 +4050,13 @@ async function runSmokeTest(homeDir: string, args: string[]): Promise<void> {
 
     // Create context pack
     if (verbose) console.log("Creating context pack...");
-    await createContextPack(smokeHomeDir, project, state2.tasks.filter((t) => t.projectId === project.id));
+    await createContextPack(
+      smokeHomeDir,
+      project,
+      state2.tasks.filter((t) => t.projectId === project.id),
+      state2.decisions.filter((d) => d.projectId === project.id),
+      state2.runs.filter((r) => r.projectId === project.id)
+    );
     steps.push({ name: "Create context pack", passed: true });
 
     // Prepare run

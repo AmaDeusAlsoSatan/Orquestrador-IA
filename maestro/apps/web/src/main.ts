@@ -282,6 +282,9 @@ function renderDashboard(): string {
   const dashboard = state.dashboard;
   if (!dashboard) return `<div class="empty">Selecione um projeto.</div>`;
 
+  const runCounts = (dashboard as any).runCounts || { active: 0, completed: 0, blocked: 0 };
+  const latestCompletedRun = (dashboard as any).latestCompletedRun;
+
   return `
     <section class="section-title">
       <div>
@@ -294,8 +297,8 @@ function renderDashboard(): string {
       ${metricCard("Status do projeto", dashboard.project.status, dashboard.project.repoPath)}
       ${metricCard("Proximo passo", dashboard.nextStep, "Use o CEO Chat para criar ou preparar trabalho.")}
       ${metricCard("Tasks abertas", String(dashboard.openTasks), `${dashboard.totalTasks} tasks no total`)}
+      ${metricCard("Runs ativas", String(runCounts.active), `${runCounts.completed} concluídas, ${runCounts.blocked} bloqueadas`)}
       ${metricCard("Runs aguardando decisao", String(dashboard.runsAwaitingDecision.length), "Human Review Gate")}
-      ${metricCard("Patch promotion", dashboard.latestPromotion?.status || "sem patch", "Ultima promocao registrada")}
       ${metricCard("Active Context", dashboard.memoryStatus?.activeContextExists ? "gerado" : "pendente", `${dashboard.memoryStatus?.activeRiskCount || 0} riscos ativos`)}
     </div>
     <div class="split" style="margin-top: 1rem;">
@@ -303,6 +306,17 @@ function renderDashboard(): string {
         <h3>Prioridades</h3>
         ${renderTaskMiniList(dashboard.highPriorityTasks)}
       </div>
+      <div class="card">
+        <h3>Última entrega concluída</h3>
+        ${latestCompletedRun ? `
+          <p><strong>Commit:</strong> <code>${escapeHtml(latestCompletedRun.finalCommit?.sha.slice(0, 7) || "não registrado")}</code></p>
+          <p><strong>Mensagem:</strong> ${escapeHtml(latestCompletedRun.finalCommit?.message || "N/A")}</p>
+          <p><strong>Goal:</strong> ${escapeHtml(latestCompletedRun.goal.slice(0, 80))}${latestCompletedRun.goal.length > 80 ? "..." : ""}</p>
+          <p class="muted">Finalizada em: ${latestCompletedRun.finalizedAt ? new Date(latestCompletedRun.finalizedAt).toLocaleString("pt-BR") : "N/A"}</p>
+        ` : `<p class="muted">Nenhuma run concluída ainda.</p>`}
+      </div>
+    </div>
+    <div class="split" style="margin-top: 1rem;">
       <div class="card">
         <h3>Brief da memoria</h3>
         <p><strong>Objetivo atual:</strong> ${escapeHtml(dashboard.brief?.currentGoal || "Nao detectado")}</p>
@@ -312,6 +326,11 @@ function renderDashboard(): string {
           <button data-memory-action="PACK">Gerar context pack</button>
           <button data-view="runs">Abrir runs</button>
         </div>
+      </div>
+      <div class="card">
+        <h3>Patch promotion</h3>
+        <p><strong>Status:</strong> ${escapeHtml(dashboard.latestPromotion?.status || "sem patch")}</p>
+        <p class="muted">Última promoção registrada</p>
       </div>
     </div>
   `;

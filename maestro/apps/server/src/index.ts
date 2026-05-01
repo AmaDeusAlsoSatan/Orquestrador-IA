@@ -338,6 +338,12 @@ async function getProjectDashboard(context: RequestContext, projectId: string) {
   const openRunDecision = openRun ? state.decisions.find((decision) => decision.runId === openRun.id) : undefined;
   const openRunNextAction = openRun ? (await buildNextActions(openRun, openRunWorkspace, openRunPromotion, openRunDecision))[0] : undefined;
 
+  // Run counts by status
+  const activeRuns = runs.filter((run) => ["PREPARED", "SUPERVISOR_PLANNED", "EXECUTOR_READY", "EXECUTOR_REPORTED", "REVIEW_READY", "REVIEWED"].includes(run.status));
+  const completedRuns = runs.filter((run) => run.status === "FINALIZED").sort(byUpdatedAtDesc);
+  const blockedRuns = runs.filter((run) => run.status === "BLOCKED");
+  const latestCompletedRun = completedRuns[0];
+
   return {
     project,
     taskCounts,
@@ -353,6 +359,17 @@ async function getProjectDashboard(context: RequestContext, projectId: string) {
     latestValidation,
     memoryStatus,
     brief,
+    runCounts: {
+      active: activeRuns.length,
+      completed: completedRuns.length,
+      blocked: blockedRuns.length
+    },
+    latestCompletedRun: latestCompletedRun ? {
+      id: latestCompletedRun.id,
+      goal: latestCompletedRun.goal,
+      finalizedAt: latestCompletedRun.finalizedAt,
+      finalCommit: latestCompletedRun.finalCommit
+    } : undefined,
     nextStep: openRunNextAction?.description || brief?.nextStep || getProjectNextStep(project, tasks, runsAwaitingDecision)
   };
 }
@@ -401,7 +418,7 @@ async function runProjectMemoryAction(context: RequestContext, projectId: string
   }
 
   if (action === "PACK") {
-    return createContextPack(context.homeDir, project, tasks, decisions);
+    return createContextPack(context.homeDir, project, tasks, decisions, runs);
   }
 
   throw new ApiError(400, `Unsupported memory action: ${action}`);

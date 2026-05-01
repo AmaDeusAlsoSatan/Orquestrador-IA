@@ -889,7 +889,7 @@ Bugs found and fixed during the pilot run:
 
 After a run is finalized and the changes are manually committed to the original repository, you can record the final commit in Maestro for audit and tracking purposes.
 
-### Recording the Final Commit
+### Recording the Final Commit (CLI)
 
 ```bash
 corepack pnpm run maestro run attach-commit --run <run-id> --commit <sha> --message <message>
@@ -907,14 +907,74 @@ This command:
 - Updates the run record in `maestro.json`
 - Provides audit trail for completed deliveries
 
+### Recording the Final Commit (UI)
+
+The Maestro UI provides a visual interface for recording final commits:
+
+1. Navigate to the **Runs** tab
+2. Select a finalized run from the **Runs Concluídas** section
+3. If no commit is recorded, a form will appear in the finalized run panel
+4. Enter the commit SHA and message
+5. Click **Registrar commit**
+
+The UI will automatically refresh and display the recorded commit information.
+
+### UI Features for Completed Runs
+
+The Maestro UI provides comprehensive support for managing completed runs:
+
+#### Run Separation by Status
+
+Runs are automatically organized into three sections:
+- **Runs Ativas**: Active runs (PREPARED, SUPERVISOR_PLANNED, EXECUTOR_READY, EXECUTOR_REPORTED, REVIEW_READY, REVIEWED)
+- **Runs Concluídas**: Completed runs (FINALIZED) with commit information
+- **Runs Bloqueadas**: Blocked runs (BLOCKED)
+
+#### Finalized Run Panel
+
+When viewing a finalized run, the UI displays:
+- ✓ Run Finalizada header with audit notice
+- Task name and status
+- Human decision status
+- Patch promotion status
+- Validation results
+- Final commit (SHA + message) or registration form
+- Creation and finalization timestamps
+- All audit files accessible via file viewer
+
+#### Dashboard Integration
+
+The project dashboard shows:
+- **Runs ativas**: Count of active runs
+- **Runs concluídas**: Count of completed runs with commits
+- **Runs bloqueadas**: Count of blocked runs
+- **Última entrega concluída**: Most recent completed run with:
+  - Commit SHA (first 7 chars)
+  - Commit message
+  - Goal/objective
+  - Finalization date
+
+#### Memory Integration
+
+The context pack and active memory now include:
+- **Últimas Entregas Concluídas**: Last 5 completed runs with:
+  - Run ID
+  - Goal/objective
+  - Finalization date
+  - Commit SHA and message (or "não registrado")
+
+This ensures the Codex Supervisor receives information about recent deliveries when planning future work.
+
 ### Important Notes
 
 - The run must be in `FINALIZED` status to attach a commit
 - Maestro does NOT create commits automatically - this command only records commits you made manually
 - The commit should exist in the original repository before recording it
 - This is for tracking and audit purposes only
+- Execution actions are hidden for finalized runs in the UI
+- Only audit/read actions are available for completed runs
 
-### Viewing Completed Runs
+### Viewing Completed Runs (CLI)
 
 Use `maestro run show --run <run-id>` to see all run details including the final commit:
 
@@ -944,7 +1004,7 @@ The complete lifecycle of a run with commit tracking:
 10. Apply to original repo
 11. Validation in original repo
 12. **Manual commit in original repo**
-13. **Record commit in Maestro** ← New step
+13. **Record commit in Maestro** (CLI or UI) ← New step
 14. Finalize run
 15. Memory refresh and checkpoint
 
