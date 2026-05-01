@@ -1080,3 +1080,46 @@ The smoke test generates a report in `data/logs/smoke-tests/` with:
 ## Environment
 
 By default, Maestro uses the directory where the CLI is executed as its home. Set `MAESTRO_HOME` if you want the CLI to manage a specific Maestro directory from another location.
+## Maestro UI
+
+O Maestro agora tem uma primeira interface local para operar o fluxo sem depender de uma sequencia longa de comandos no terminal.
+
+Comandos principais:
+
+```bash
+corepack pnpm install
+corepack pnpm run build
+corepack pnpm run dev:ui
+```
+
+URLs locais:
+
+- Web UI: `http://127.0.0.1:5173`
+- API local: `http://127.0.0.1:4317/api/health`
+
+A UI roda em modo local trusted, sem login por enquanto. Ela ainda nao integra Codex ou Kiro automaticamente: o fluxo continua manual, mas agora a tela organiza projetos, tasks, runs, prompts, anexos, handoffs, review packages, decisoes humanas, validacoes e patch promotion.
+
+O CLI continua sendo o motor do Maestro. A UI chama a API local, e a API reaproveita os mesmos modulos do monorepo para manter o comportamento consistente.
+
+O que ja existe no MVP da UI:
+
+- Project switcher.
+- Dashboard do projeto ativo.
+- CEO Command Center simulado, onde cada pedido vira task rastreavel.
+- Task manager basico.
+- Run Console com checklist visual.
+- Viewer de prompts e arquivos importantes da run.
+- Attach de outputs do Codex Supervisor, Kiro Executor e Codex Reviewer.
+- Human Review Gate.
+- Acoes controladas para workspace, handoff, capture diff, review package, patch export/check/plan, validacoes e finalize.
+- Memory view com Active Context, checkpoints, open questions, risk register e context pack.
+
+O que continua propositalmente fora:
+
+- Integracao automatica com Codex.
+- Integracao automatica com Kiro.
+- Provider router.
+- Login/autenticacao.
+- Deploy.
+- Commit automatico.
+- Patch apply pela UI.

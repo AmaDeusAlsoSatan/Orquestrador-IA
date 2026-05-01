@@ -1,0 +1,13 @@
+{
+  "name": "@maestro/web",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/assets/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "dev": "node scripts/dev-server.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {}
+}

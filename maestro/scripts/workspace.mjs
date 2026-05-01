@@ -13,7 +13,8 @@ const workspaces = [
   "packages/memory",
   "packages/providers",
   "apps/server",
-  "apps/cli"
+  "apps/cli",
+  "apps/web"
 ];
 
 if (!["build", "clean", "typecheck"].includes(command)) {
@@ -46,5 +47,17 @@ for (const workspace of workspaces) {
 
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
+  }
+
+  if (command === "build" && workspace === "apps/web") {
+    const copyResult = spawnSync(process.execPath, [path.join(workspaceDir, "scripts", "copy-static.mjs")], {
+      cwd: rootDir,
+      stdio: "inherit",
+      shell: false
+    });
+
+    if (copyResult.status !== 0) {
+      process.exit(copyResult.status ?? 1);
+    }
   }
 }

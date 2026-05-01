@@ -35,6 +35,14 @@ importers:
       '@maestro/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@maestro/memory':
+        specifier: workspace:*
+        version: link:../../packages/memory
+      '@maestro/runner':
+        specifier: workspace:*
+        version: link:../../packages/runner
+
+  apps/web: {}
 
   packages/agents:
     dependencies:
