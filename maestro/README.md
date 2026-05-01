@@ -863,6 +863,28 @@ Once you complete your first pilot run successfully:
 
 The pilot mode remains available for future runs - use it whenever you want guided execution with safety checks.
 
+## First Real Pilot Run
+
+The first real pilot run was completed successfully on 2026-05-01 with the One Piece TCG project. The complete postmortem is documented in:
+
+**[docs/pilot-run-001-postmortem.md](docs/pilot-run-001-postmortem.md)**
+
+Key achievements:
+- ✅ Complete workflow executed (20 steps from pilot start to finalization)
+- ✅ Workspace sandbox isolation worked correctly
+- ✅ Codex Reviewer received real Git diff
+- ✅ Human Review Gate enforced explicit approval
+- ✅ Patch Promotion with multiple safety checks
+- ✅ Validation on both workspace and original repo
+- ✅ Manual commit maintained human control
+
+Bugs found and fixed during the pilot run:
+- Untracked files not appearing in diff (fixed in `60f09d1`)
+- Review package not embedding real diff (fixed in `60f09d1`)
+- `--dry-run` flag not accepting boolean (fixed in `e395bf8`)
+
+**The Maestro is ready for real tasks.**
+
 ## Memory Consolidation / Active Context
 
 Maestro can consolidate the growing Vault into an operational memory layer. This keeps the current state easy to recover without depending on chat history or manually rereading every log.
