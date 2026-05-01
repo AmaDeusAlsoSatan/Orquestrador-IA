@@ -17,3 +17,9 @@ data/config/*
 !data/config/.gitkeep
 data/vault/projects/*
 !data/vault/projects/.gitkeep
+
+# Provider runtime data (isolated OpenClaude, etc.)
+data/providers/
+
+# Real provider configs (keep examples in config/)
+data/config/openclaude.json

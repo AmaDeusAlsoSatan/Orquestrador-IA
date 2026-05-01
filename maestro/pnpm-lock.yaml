@@ -26,6 +26,9 @@ importers:
       '@maestro/memory':
         specifier: workspace:*
         version: link:../../packages/memory
+      '@maestro/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
       '@maestro/runner':
         specifier: workspace:*
         version: link:../../packages/runner

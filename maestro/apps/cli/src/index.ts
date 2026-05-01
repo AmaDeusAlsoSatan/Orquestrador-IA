@@ -106,6 +106,7 @@ import {
   type CheckPatchResult,
   type InspectPatchResult
 } from "@maestro/runner";
+import { doctorOpenClaudeProvider, discoverOpenClaudeProvider } from "@maestro/providers";
 
 interface ParsedArgs {
   command: string | undefined;
@@ -162,6 +163,9 @@ async function main(): Promise<void> {
         break;
       case "validation":
         await handleValidationCommand(homeDir, parsed.rest);
+        break;
+      case "provider":
+        await handleProviderCommand(homeDir, parsed.rest);
         break;
       case "repo":
         await handleRepoCommand(homeDir, parsed.rest);
@@ -1425,6 +1429,116 @@ async function fileExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function handleProviderCommand(homeDir: string, args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+
+  switch (subcommand) {
+    case "doctor":
+      await providerDoctor(homeDir, rest);
+      break;
+    case "discover":
+      await providerDiscover(homeDir, rest);
+      break;
+    case "help":
+    case "--help":
+    case "-h":
+    case undefined:
+      printProviderHelp();
+      break;
+    default:
+      throw new Error(`Unknown provider command: ${subcommand}`);
+  }
+}
+
+async function providerDoctor(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const provider = getFlag(flags, "provider") || "openclaude";
+
+  if (provider !== "openclaude") {
+    throw new Error(`Unsupported provider: ${provider}. Only 'openclaude' is supported.`);
+  }
+
+  console.log(`Running provider doctor for: ${provider}\n`);
+
+  const result = await doctorOpenClaudeProvider(homeDir);
+
+  console.log(`Provider: ${result.provider}`);
+  console.log(`Status: ${result.status}`);
+  console.log(`Summary: ${result.summary}\n`);
+
+  console.log("Checks:\n");
+  for (const check of result.checks) {
+    const icon = check.status === "OK" ? "✓" : check.status === "ERROR" ? "✗" : check.status === "WARN" ? "⚠" : "○";
+    console.log(`  ${icon} ${check.label}: ${check.status}`);
+    console.log(`     ${check.message}`);
+    if (check.details) {
+      console.log(`     ${check.details.split("\n").join("\n     ")}`);
+    }
+    console.log("");
+  }
+
+  if (result.status === "BLOCKED") {
+    console.log("Provider is blocked. Fix the issues above and run doctor again.");
+  } else if (result.status === "READY") {
+    console.log("Provider is ready. You can now run discovery:");
+    console.log(`  maestro provider discover --provider ${provider}`);
+  }
+}
+
+async function providerDiscover(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const provider = getFlag(flags, "provider") || "openclaude";
+
+  if (provider !== "openclaude") {
+    throw new Error(`Unsupported provider: ${provider}. Only 'openclaude' is supported.`);
+  }
+
+  console.log(`Running provider discovery for: ${provider}\n`);
+
+  const result = await discoverOpenClaudeProvider(homeDir);
+
+  console.log(`Provider: ${result.provider}`);
+  console.log(`Timestamp: ${result.timestamp}`);
+  console.log(`Status: ${result.status}\n`);
+
+  if (result.error) {
+    console.log(`Error: ${result.error}\n`);
+  }
+
+  if (result.versionOutput) {
+    console.log("Version output:");
+    console.log(result.versionOutput);
+    console.log("");
+  }
+
+  if (result.helpOutput) {
+    console.log("Help output (first 500 chars):");
+    console.log(result.helpOutput.slice(0, 500));
+    if (result.helpOutput.length > 500) {
+      console.log("...(truncated)");
+    }
+    console.log("");
+  }
+
+  if (result.reportPath) {
+    console.log(`Full report saved to: ${result.reportPath}`);
+  }
+
+  if (result.status === "SUCCESS") {
+    console.log("\nDiscovery successful. The provider is ready for integration testing.");
+  } else {
+    console.log("\nDiscovery failed. Check the error above and run provider doctor.");
+  }
+}
+
+function printProviderHelp(): void {
+  console.log(`Provider commands:
+
+  maestro provider doctor [--provider openclaude]
+  maestro provider discover [--provider openclaude]
+`);
 }
 
 async function handleRepoCommand(homeDir: string, args: string[]): Promise<void> {
@@ -3804,6 +3918,8 @@ Usage:
   maestro task update --task <id> [--status <status>] [--priority <priority>]
   maestro task block --task <id> --reason <reason>
   maestro task complete --task <id>
+  maestro provider doctor [--provider openclaude]
+  maestro provider discover [--provider openclaude]
   maestro task sync-vault --project <id>
   maestro context import --project <id> --file <path>
   maestro context status --project <id>

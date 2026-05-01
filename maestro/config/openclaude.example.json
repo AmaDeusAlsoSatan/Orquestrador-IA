@@ -1,0 +1,11 @@
+{
+  "executablePath": "",
+  "workingDirectory": "",
+  "profileName": "maestro-kiro",
+  "defaultModel": "best-reasoning-free",
+  "timeoutMs": 300000,
+  "env": {
+    "OPENCLAUDE_HOME": "./data/providers/openclaude"
+  },
+  "notes": "This is an example configuration. Copy to data/config/openclaude.json and fill in your values. The Maestro should use an isolated OpenClaude configuration, not the one used by your current assistant."
+}

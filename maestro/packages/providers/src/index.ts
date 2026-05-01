@@ -1,5 +1,7 @@
 import type { ProviderProfile } from "@maestro/core";
 
+export * from "./openclaude-doctor";
+
 export const PROVIDER_INTEGRATION_STATUS = "planned";
 
 export function createMockProviderProfile(now = new Date().toISOString()): ProviderProfile {

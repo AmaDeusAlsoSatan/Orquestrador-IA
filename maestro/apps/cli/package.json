@@ -17,6 +17,7 @@
     "@maestro/agents": "workspace:*",
     "@maestro/core": "workspace:*",
     "@maestro/memory": "workspace:*",
+    "@maestro/providers": "workspace:*",
     "@maestro/runner": "workspace:*"
   }
 }

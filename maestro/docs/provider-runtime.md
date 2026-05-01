@@ -1,135 +1,241 @@
 # Provider Runtime
 
-Maestro treats agents as workers inside a local company. The user should talk to the CEO and approve important gates; the system should prepare the right work for Supervisor, Executor, Reviewer, and QA.
+This document describes how Maestro integrates with external LLM providers, specifically OpenClaude as the runtime for Kiro models.
 
-This document describes the first provider runtime layer. It is intentionally conservative: it does not run OpenClaude, Kiro, or Codex automatically yet.
+## Overview
 
-## Core Concepts
+Maestro uses a **provider-adapter** architecture:
 
-### AgentProfile
+- **Provider**: The runtime environment (e.g., OpenClaude CLI)
+- **Adapter**: The Maestro integration layer (e.g., `openclaude`, `kiro_openclaude`)
+- **Model**: The specific LLM model within the provider (e.g., `best-reasoning-free`)
 
-An `AgentProfile` is a worker definition:
+## OpenClaude Bridge
 
-- role, such as `CEO`, `CTO_SUPERVISOR`, `FULL_STACK_EXECUTOR`, `CODE_REVIEWER`, or `QA_VALIDATOR`;
-- provider, such as `manual`, `codex_manual`, `openclaude`, or `kiro_openclaude`;
-- optional model name;
-- responsibilities;
-- allowed actions.
+### Important: Isolated Configuration
 
-Profiles live in Maestro state and can be changed without changing code.
+**The Maestro MUST NOT reuse the OpenClaude configuration from your current assistant.**
 
-### Provider
+Maestro requires an isolated OpenClaude instance/profile to avoid:
+- Interfering with your current assistant's sessions
+- Mixing conversation histories
+- Conflicting configurations
+- Accidental data leakage between contexts
 
-A provider is the runtime backend used by an agent profile.
+### Configuration
 
-Current providers:
-
-- `manual`: prepares prompt files and waits for a human/manual output.
-- `codex_manual`: same safe manual flow, but semantically means the output is expected from Codex.
-- `openclaude`: reserved for an isolated Maestro OpenClaude runtime.
-- `kiro_openclaude`: reserved for the path where Maestro calls OpenClaude, and OpenClaude uses a Kiro/provider profile.
-
-### Model
-
-The model is a label attached to a profile. In this phase, model names can be placeholders such as:
-
-- `best-reasoning-free`
-- `best-coding-free`
-- `best-review-free`
-- `local-validation`
-
-The editable default map is created at:
-
-```text
-data/config/agent-model-map.json
-```
-
-## OpenClaude Isolation
-
-Maestro must not reuse the OpenClaude configuration, memory, provider state, or history from another assistant.
-
-Use two separate OpenClaude worlds:
-
-```text
-OpenClaude A - current assistant
-  config/history/memory/providers owned by the assistant
-
-OpenClaude B - Maestro orchestrator
-  isolated config/history/memory/providers owned by Maestro
-```
-
-When OpenClaude is enabled later, Maestro should use only a dedicated config such as:
-
-```text
-data/config/openclaude-runtime.json
-```
-
-The current adapter stub intentionally returns `BLOCKED` if no dedicated Maestro OpenClaude config exists. This protects the assistant's OpenClaude from accidental reuse.
-
-## Kiro via OpenClaude
-
-`kiro_openclaude` means:
-
-```text
-Maestro -> Provider Adapter -> OpenClaude CLI/profile -> Kiro/provider/model -> output back to Maestro
-```
-
-Maestro does not talk directly to Kiro in this phase. It prepares invocations and records results. The real provider bridge comes later.
-
-## Agent Invocations
-
-An invocation is a durable record of one agent attempt for one run.
-
-Generated files:
-
-```text
-data/runs/<project-id>/<run-id>/agents/<invocation-id>/
-  00-invocation.json
-  01-input-prompt.md
-  02-output.md
-```
-
-Initial stage mapping:
-
-```text
-CTO_SUPERVISOR      -> 03-codex-supervisor-prompt.md
-FULL_STACK_EXECUTOR -> handoff/07-kiro-prompt.md
-CODE_REVIEWER       -> review/08-codex-reviewer-prompt.md
-QA_VALIDATOR        -> 24-validation-workspace.md
-CEO                 -> 01-goal.md
-```
-
-Manual adapters create the prompt and then return `BLOCKED`, because they are waiting for manual output. This is deliberate. It formalizes the old copy/paste flow without pretending automation is already available.
-
-Status policy:
-
-- `BLOCKED` means the invocation is waiting on a human output or missing provider configuration.
-- `FAILED` means an adapter attempted work and hit an actual runtime error.
-- `SUCCEEDED` means an output was attached or produced and recorded by Maestro.
-
-Normal agent invocations are blocked for runs in `FINALIZED` or `BLOCKED` status. A future audit mode can inspect completed runs, but execution-stage invocations should not mutate a closed run.
-
-## Commands
+1. **Copy the example configuration:**
 
 ```bash
-corepack pnpm run maestro agents init-defaults
-corepack pnpm run maestro agents list
-corepack pnpm run maestro agents show --agent cto-supervisor
-corepack pnpm run maestro agents update --agent full-stack-executor --provider kiro_openclaude --model best-coding-free
-corepack pnpm run maestro agent invoke --run <run-id> --role CTO_SUPERVISOR
-corepack pnpm run maestro agent attach-output --invocation <invocation-id> --file ./codex-plan.md
+cp config/openclaude.example.json data/config/openclaude.json
 ```
 
-For stage-backed roles, `agent attach-output` also updates the matching run stage:
+2. **Edit `data/config/openclaude.json`:**
 
-- `SUPERVISOR_PLAN` -> `07-supervisor-output.md`
-- `EXECUTOR_IMPLEMENT` -> `08-executor-output.md`
-- `REVIEWER_REVIEW` -> `09-reviewer-output.md`
+```json
+{
+  "executablePath": "/path/to/openclaude",
+  "workingDirectory": "/path/to/working/dir",
+  "profileName": "maestro-kiro",
+  "defaultModel": "best-reasoning-free",
+  "timeoutMs": 300000,
+  "env": {
+    "OPENCLAUDE_HOME": "./data/providers/openclaude"
+  }
+}
+```
 
-## Future Work
+**Key fields:**
 
-- Configure isolated Maestro OpenClaude runtime.
-- Add a real `openclaude` adapter implementation.
-- Add queue/heartbeat worker.
-- Add audit-only invocations for finalized runs.
-- Keep Human Review Gate as the final acceptance authority.
+- `executablePath`: Path to the OpenClaude CLI executable
+- `workingDirectory`: Directory where OpenClaude will run
+- `profileName`: Isolated profile name for Maestro (e.g., `maestro-kiro`)
+- `defaultModel`: Default Kiro model to use
+- `timeoutMs`: Timeout for provider invocations (5 minutes default)
+- `env.OPENCLAUDE_HOME`: Isolated home directory for OpenClaude data
+
+### Provider Doctor
+
+Before using OpenClaude, run the provider doctor to verify configuration:
+
+```bash
+corepack pnpm run maestro provider doctor --provider openclaude
+```
+
+The doctor checks:
+- ✓ Configuration file exists
+- ✓ Executable path is configured
+- ✓ Executable file exists
+- ✓ Working directory is configured and exists
+- ✓ Isolated OPENCLAUDE_HOME is configured
+- ✓ Isolated home directory exists or can be created
+- ✓ Basic command response (--version)
+
+**Status:**
+- `READY`: Provider is ready to use
+- `BLOCKED`: Configuration or setup issues need to be fixed
+- `ERROR`: Critical errors prevent provider use
+
+### Provider Discovery
+
+After the doctor passes, run discovery to inspect the provider:
+
+```bash
+corepack pnpm run maestro provider discover --provider openclaude
+```
+
+Discovery runs:
+- `<openclaude> --help` → saved to `data/providers/openclaude/discovery/help.txt`
+- `<openclaude> --version` → saved to `data/providers/openclaude/discovery/version.txt`
+- Generates `data/providers/openclaude/discovery/discovery-report.md`
+
+This is a **read-only** operation that does not execute prompts or modify state.
+
+## Agent Adapters
+
+Maestro agent adapters map to provider configurations:
+
+### Manual Adapters
+
+- `manual`: Human provides output manually
+- `codex_manual`: Codex Supervisor (manual)
+
+These adapters return `BLOCKED` status and require manual output via:
+
+```bash
+maestro agent attach-output --invocation <id> --file <output.md>
+```
+
+### OpenClaude Adapters
+
+- `openclaude`: Generic OpenClaude adapter
+- `kiro_openclaude`: Kiro-specific OpenClaude adapter
+
+**Current Status:** These adapters are implemented but **intentionally disabled** until provider configuration is complete and tested.
+
+When invoked, they return:
+- `BLOCKED: OpenClaude provider config missing` (if config not found)
+- `BLOCKED: OpenClaude executable not found` (if executable missing)
+- `BLOCKED: OpenClaude provider not ready` (if doctor hasn't passed)
+- `BLOCKED: OpenClaude execution intentionally disabled until provider run is enabled` (if ready but not yet enabled)
+
+## Model Placeholders
+
+The default configuration includes placeholder model names:
+
+- `best-reasoning-free`: Placeholder for best reasoning model
+- `best-coding-free`: Placeholder for best coding model
+- `best-review-free`: Placeholder for best review model
+
+**These are NOT real model names.** You must replace them with actual Kiro model names available in your OpenClaude instance.
+
+To find available models, check your OpenClaude documentation or run:
+
+```bash
+<openclaude> --list-models
+```
+
+(if such a command exists)
+
+## Agent Roles and Models
+
+Maestro agent roles map to models:
+
+| Role | Adapter | Model Placeholder | Purpose |
+|------|---------|-------------------|---------|
+| CEO | `codex_manual` | N/A | Strategic planning (manual) |
+| CTO_SUPERVISOR | `codex_manual` | N/A | Technical planning (manual) |
+| FULL_STACK_EXECUTOR | `kiro_openclaude` | `best-coding-free` | Code execution |
+| CODE_REVIEWER | `openclaude` | `best-review-free` | Code review |
+| QA_VALIDATOR | `openclaude` | `best-reasoning-free` | Quality validation |
+
+Update these mappings with:
+
+```bash
+maestro agents update --agent <id> --provider <provider> --model <model>
+```
+
+## Workflow Integration
+
+### Current Workflow (Manual)
+
+1. Prepare run
+2. Invoke Supervisor: `maestro agent invoke --run <id> --role CTO_SUPERVISOR`
+3. Manually run Codex, copy output
+4. Attach output: `maestro agent attach-output --invocation <id> --file <output.md>`
+5. Run moves to `SUPERVISOR_PLANNED`
+6. Repeat for Executor, Reviewer
+
+### Future Workflow (Automated)
+
+1. Prepare run
+2. Invoke Supervisor: `maestro agent invoke --run <id> --role CTO_SUPERVISOR`
+3. **Maestro automatically calls OpenClaude → Kiro**
+4. Output captured and attached automatically
+5. Run moves to `SUPERVISOR_PLANNED`
+6. Repeat for Executor, Reviewer
+
+## Safety and Isolation
+
+**Critical Rules:**
+
+1. **Never reuse the assistant's OpenClaude configuration**
+2. **Always use isolated `OPENCLAUDE_HOME`**
+3. **Use separate profile name** (e.g., `maestro-kiro`)
+4. **Test with discovery before enabling execution**
+5. **Start with manual adapters, migrate to automated gradually**
+
+## Next Steps
+
+1. ✅ Run `maestro provider doctor --provider openclaude`
+2. ✅ Fix any configuration issues
+3. ✅ Run `maestro provider discover --provider openclaude`
+4. ✅ Review discovery report
+5. ⏳ Update model placeholders with real Kiro model names
+6. ⏳ Enable OpenClaude execution in adapters
+7. ⏳ Test with a simple invocation
+8. ⏳ Integrate into full workflow
+
+## Troubleshooting
+
+### Config file not found
+
+```
+Error: OpenClaude provider config missing
+```
+
+**Solution:** Copy `config/openclaude.example.json` to `data/config/openclaude.json` and edit.
+
+### Executable not found
+
+```
+Error: Executable file not found
+```
+
+**Solution:** Update `executablePath` in config to point to the correct OpenClaude CLI executable.
+
+### Provider not ready
+
+```
+Error: OpenClaude provider not ready
+```
+
+**Solution:** Run `maestro provider doctor --provider openclaude` to diagnose issues.
+
+### Discovery failed
+
+```
+Error: --help failed: ...
+```
+
+**Solution:** Check that the executable path is correct and the OpenClaude CLI is properly installed.
+
+## Future Enhancements
+
+- Support for other providers (Anthropic API, OpenAI API, local models)
+- Provider-specific configuration profiles
+- Model capability detection
+- Automatic model selection based on task requirements
+- Cost tracking and budgeting
+- Rate limiting and retry logic
+- Streaming output support
