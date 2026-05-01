@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { includeUntrackedFilesInGitDiff } from "./git-inspector";
 
 const execFileAsync = promisify(execFile);
 
@@ -36,6 +37,8 @@ export interface InspectPatchResult {
 
 export async function exportWorkspacePatch(options: ExportPatchOptions): Promise<void> {
   const { workspacePath, outPath, baselineCommit } = options;
+
+  await includeUntrackedFilesInGitDiff(workspacePath);
 
   const args = baselineCommit
     ? ["diff", "--binary", baselineCommit]

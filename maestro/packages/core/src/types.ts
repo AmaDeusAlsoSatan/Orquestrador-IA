@@ -198,6 +198,7 @@ export interface ValidationCommandResult {
   commandId: string;
   label: string;
   commandLine: string;
+  resolvedCommand?: string;
   exitCode: number | null;
   status: ValidationStatus;
   stdoutPath: string;

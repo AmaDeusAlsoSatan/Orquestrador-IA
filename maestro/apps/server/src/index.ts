@@ -789,11 +789,12 @@ async function runValidationAction(context: RequestContext, runId: string, targe
       stdoutPath,
       stderrPath
     });
-    const status: ValidationStatus = result.exitCode === 0 ? "PASSED" : "FAILED";
+    const status: ValidationStatus = result.exitCode === null ? "BLOCKED" : result.exitCode === 0 ? "PASSED" : "FAILED";
     commandResults.push({
       commandId: command.id,
       label: command.label,
       commandLine: [command.command, ...command.args].join(" "),
+      resolvedCommand: result.resolvedCommand,
       exitCode: result.exitCode,
       status,
       stdoutPath,
@@ -802,7 +803,11 @@ async function runValidationAction(context: RequestContext, runId: string, targe
     });
   }
 
-  const overallStatus: ValidationStatus = commandResults.some((result) => result.status === "FAILED") ? "FAILED" : "PASSED";
+  const overallStatus: ValidationStatus = commandResults.some((result) => result.status === "FAILED")
+    ? "FAILED"
+    : commandResults.some((result) => result.status === "BLOCKED")
+      ? "BLOCKED"
+      : "PASSED";
   const validationRun: ValidationRun = {
     id: validationId,
     runId: run.id,

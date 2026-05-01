@@ -11,6 +11,7 @@ export interface GitRepoState {
   diffStat: string;
   changedFiles: string[];
   untrackedFiles: string[];
+  untrackedFilesIncludedInDiff: boolean;
   lastCommits: string;
   capturedAt: string;
   isGitRepo: boolean;
@@ -18,7 +19,11 @@ export interface GitRepoState {
 
 export type GitGuardStatus = "CLEAN" | "DIRTY" | "UNTRACKED" | "NOT_GIT_REPO";
 
-export async function inspectGitRepo(repoPath: string): Promise<GitRepoState> {
+export interface GitDiffOptions {
+  includeUntracked?: boolean;
+}
+
+export async function inspectGitRepo(repoPath: string, options: GitDiffOptions = {}): Promise<GitRepoState> {
   const isGitRepo = await checkIsGitRepo(repoPath);
 
   if (!isGitRepo) {
@@ -30,19 +35,25 @@ export async function inspectGitRepo(repoPath: string): Promise<GitRepoState> {
       diffStat: "",
       changedFiles: [],
       untrackedFiles: [],
+      untrackedFilesIncludedInDiff: false,
       lastCommits: "",
       capturedAt: new Date().toISOString(),
       isGitRepo: false
     };
   }
 
-  const [branch, head, statusShort, diffStat, lastCommits, untrackedFiles] = await Promise.all([
+  const untrackedFiles = await getUntrackedFiles(repoPath);
+  if (options.includeUntracked) {
+    await includeUntrackedFilesInGitDiff(repoPath, untrackedFiles);
+  }
+
+  const [branch, head, statusShort, diffStat, lastCommits, intentToAddFiles] = await Promise.all([
     runGitSafe(repoPath, ["branch", "--show-current"]),
     runGitSafe(repoPath, ["rev-parse", "HEAD"]),
     runGitSafe(repoPath, ["status", "--short"]),
     getGitDiffStat(repoPath),
     runGitSafe(repoPath, ["log", "-5", "--oneline"]),
-    runGitSafe(repoPath, ["ls-files", "--others", "--exclude-standard"]).then(splitLines)
+    runGitSafe(repoPath, ["diff", "--name-only", "--diff-filter=A"]).then(splitLines)
   ]);
 
   return {
@@ -53,31 +64,55 @@ export async function inspectGitRepo(repoPath: string): Promise<GitRepoState> {
     diffStat,
     changedFiles: getTrackedChangedFiles(statusShort),
     untrackedFiles,
+    untrackedFilesIncludedInDiff: Boolean(options.includeUntracked && (untrackedFiles.length > 0 || intentToAddFiles.length > 0)),
     lastCommits,
     capturedAt: new Date().toISOString(),
     isGitRepo: true
   };
 }
 
-export async function getGitDiff(repoPath: string): Promise<string> {
+export async function getGitDiff(repoPath: string, options: GitDiffOptions = {}): Promise<string> {
   if (!(await checkIsGitRepo(repoPath))) {
     return "NOT_GIT_REPO";
   }
 
-  return runGit(repoPath, ["diff", "--no-ext-diff"]);
+  if (options.includeUntracked) {
+    await includeUntrackedFilesInGitDiff(repoPath);
+  }
+
+  return runGit(repoPath, ["diff", "--no-ext-diff", "--binary"]);
 }
 
-export async function getGitDiffStat(repoPath: string): Promise<string> {
+export async function getGitDiffStat(repoPath: string, options: GitDiffOptions = {}): Promise<string> {
   if (!(await checkIsGitRepo(repoPath))) {
     return "NOT_GIT_REPO";
+  }
+
+  if (options.includeUntracked) {
+    await includeUntrackedFilesInGitDiff(repoPath);
   }
 
   return runGit(repoPath, ["diff", "--stat"]);
 }
 
-export async function getChangedFiles(repoPath: string): Promise<string[]> {
-  const state = await inspectGitRepo(repoPath);
+export async function getChangedFiles(repoPath: string, options: GitDiffOptions = {}): Promise<string[]> {
+  const state = await inspectGitRepo(repoPath, options);
   return state.changedFiles;
+}
+
+export async function includeUntrackedFilesInGitDiff(repoPath: string, untrackedFiles?: string[]): Promise<string[]> {
+  if (!(await checkIsGitRepo(repoPath))) {
+    return [];
+  }
+
+  const files = untrackedFiles ?? await getUntrackedFiles(repoPath);
+
+  if (files.length === 0) {
+    return [];
+  }
+
+  await runGit(repoPath, ["add", "-N", "--", ...files]);
+  return files;
 }
 
 export function getGitGuardStatus(state: GitRepoState): GitGuardStatus {
@@ -114,6 +149,10 @@ async function checkIsGitRepo(repoPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function getUntrackedFiles(repoPath: string): Promise<string[]> {
+  return runGitSafe(repoPath, ["ls-files", "--others", "--exclude-standard"]).then(splitLines);
 }
 
 async function runGit(repoPath: string, args: string[]): Promise<string> {

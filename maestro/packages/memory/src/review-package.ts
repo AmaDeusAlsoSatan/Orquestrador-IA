@@ -55,7 +55,11 @@ export async function createReviewPackage(
   await fs.writeFile(path.join(reviewDir, "05-git-evidence.md"), renderGitEvidence(gitBaseline, gitAfter, changedFiles, diffSource), "utf8");
   await fs.writeFile(path.join(reviewDir, "06-real-diff.md"), realDiff || renderMissingDiff(), "utf8");
   await fs.writeFile(path.join(reviewDir, "07-review-checklist.md"), renderReviewChecklist(), "utf8");
-  await fs.writeFile(path.join(reviewDir, "08-codex-reviewer-prompt.md"), renderCodexReviewerPrompt(run, project, task, missingDiff, diffSource), "utf8");
+  await fs.writeFile(
+    path.join(reviewDir, "08-codex-reviewer-prompt.md"),
+    renderCodexReviewerPrompt(run, project, task, missingDiff, diffSource, realDiff, changedFiles),
+    "utf8"
+  );
   await fs.writeFile(path.join(reviewDir, "09-verdict-template.md"), renderVerdictTemplate(), "utf8");
 
   return {
@@ -298,7 +302,9 @@ function renderCodexReviewerPrompt(
   project: Project,
   task: ProjectTask | undefined,
   missingDiff: boolean,
-  diffSource: string
+  diffSource: string,
+  realDiff: string | undefined,
+  changedFiles: string | undefined
 ): string {
   const diffWarning = missingDiff
     ? `
@@ -359,6 +365,14 @@ Isso mostra o estado do repositório antes e depois da execução, e a lista de 
 Leia o diff completo em \`review/06-real-diff.md\`.
 
 **Este é o mais importante.** O diff real mostra exatamente o que foi alterado no código. Compare com o plano aprovado e com o relatório do executor.
+
+## Arquivos Alterados Capturados
+
+${asEmbeddedCodeBlock(changedFiles || "[Changed files not captured]")}
+
+## Diff Real Embutido
+
+${asEmbeddedCodeBlock(realDiff || "[Real diff not captured]")}
 
 ## Checklist de Revisão
 
@@ -425,6 +439,15 @@ O operador humano irá:
 
 **Boa revisão!**
 `;
+}
+
+function asEmbeddedCodeBlock(value: string): string {
+  const maxChars = 80_000;
+  const content = value.length > maxChars
+    ? `${value.slice(0, maxChars)}\n\n[CONTEUDO TRUNCADO NO PROMPT: leia o arquivo correspondente no review package para o conteudo completo.]`
+    : value;
+
+  return `\`\`\`text\n${content}\n\`\`\``;
 }
 
 function renderVerdictTemplate(): string {

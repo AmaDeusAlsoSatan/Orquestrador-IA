@@ -79,11 +79,11 @@ export async function createRunWorkspace(options: CreateWorkspaceOptions): Promi
 }
 
 export async function inspectRunWorkspace(workspacePath: string): Promise<GitRepoState> {
-  return inspectGitRepo(workspacePath);
+  return inspectGitRepo(workspacePath, { includeUntracked: true });
 }
 
 export async function getRunWorkspaceDiff(workspacePath: string): Promise<string> {
-  return getGitDiff(workspacePath);
+  return getGitDiff(workspacePath, { includeUntracked: true });
 }
 
 export async function createRunWorkspacePatch(workspacePath: string, outPath: string): Promise<void> {

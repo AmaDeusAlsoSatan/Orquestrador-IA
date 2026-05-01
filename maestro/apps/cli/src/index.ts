@@ -694,6 +694,7 @@ async function runValidationOnTarget(
       commandId: cmd.id,
       label: cmd.label,
       commandLine: `${cmd.command} ${cmd.args.join(" ")}`,
+      resolvedCommand: result.resolvedCommand,
       exitCode: result.exitCode,
       status: cmdStatus,
       stdoutPath,
@@ -794,6 +795,7 @@ ${validationRun.status}
 ${validationRun.commandResults.map((result) => `### ${result.label}
 
 - **Command:** \`${result.commandLine}\`
+- **Command resolved:** \`${result.resolvedCommand || result.commandLine.split(" ")[0]}\`
 - **Exit code:** ${result.exitCode !== null ? result.exitCode : "timeout/killed"}
 - **Duration:** ${result.durationMs}ms
 - **Status:** ${result.status}

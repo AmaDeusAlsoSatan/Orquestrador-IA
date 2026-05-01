@@ -14,6 +14,7 @@ export interface RunValidationCommandOptions {
 export interface RunValidationCommandResult {
   exitCode: number | null;
   durationMs: number;
+  resolvedCommand: string;
 }
 
 export async function detectPackageManager(repoPath: string): Promise<"pnpm" | "npm" | "yarn" | "bun" | undefined> {
@@ -54,6 +55,8 @@ export async function detectPackageScripts(repoPath: string): Promise<Record<str
 
 export async function runValidationCommand(options: RunValidationCommandOptions): Promise<RunValidationCommandResult> {
   const { command, args, cwd, timeoutMs, stdoutPath, stderrPath } = options;
+  const resolvedCommand = resolveValidationCommand(command);
+  const spawnInvocation = getSpawnInvocation(resolvedCommand, args);
 
   // Ensure output directories exist
   await fs.mkdir(path.dirname(stdoutPath), { recursive: true });
@@ -65,11 +68,42 @@ export async function runValidationCommand(options: RunValidationCommandOptions)
   const startTime = Date.now();
 
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd,
-      stdio: ["ignore", stdoutStream.fd, stderrStream.fd],
-      shell: false
-    });
+    let settled = false;
+    let child: ReturnType<typeof spawn>;
+
+    const resolveOnce = (result: RunValidationCommandResult) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve(result);
+    };
+
+    const resolveSpawnFailure = async (error: Error) => {
+      await stdoutStream.close().catch(() => undefined);
+      await stderrStream.close().catch(() => undefined);
+
+      try {
+        await fs.appendFile(stderrPath, `\nCommand resolved: ${resolvedCommand}\nSpawn error: ${error.message}\n`, "utf8");
+      } catch {
+        // Ignore write errors
+      }
+
+      const durationMs = Date.now() - startTime;
+      resolveOnce({ exitCode: null, durationMs, resolvedCommand });
+    };
+
+    try {
+      child = spawn(spawnInvocation.command, spawnInvocation.args, {
+        cwd,
+        stdio: ["ignore", stdoutStream.fd, stderrStream.fd],
+        shell: false
+      });
+    } catch (error) {
+      void resolveSpawnFailure(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
 
     let timeoutId: NodeJS.Timeout | undefined;
     let killed = false;
@@ -92,13 +126,13 @@ export async function runValidationCommand(options: RunValidationCommandOptions)
         clearTimeout(timeoutId);
       }
 
-      await stdoutStream.close();
-      await stderrStream.close();
+      await stdoutStream.close().catch(() => undefined);
+      await stderrStream.close().catch(() => undefined);
 
       const durationMs = Date.now() - startTime;
       const exitCode = killed ? null : code;
 
-      resolve({ exitCode, durationMs });
+      resolveOnce({ exitCode, durationMs, resolvedCommand });
     });
 
     child.on("error", async (error) => {
@@ -106,18 +140,51 @@ export async function runValidationCommand(options: RunValidationCommandOptions)
         clearTimeout(timeoutId);
       }
 
-      await stdoutStream.close();
-      await stderrStream.close();
-
-      // Write error to stderr file
-      try {
-        await fs.appendFile(stderrPath, `\nSpawn error: ${error.message}\n`, "utf8");
-      } catch {
-        // Ignore write errors
-      }
-
-      const durationMs = Date.now() - startTime;
-      resolve({ exitCode: null, durationMs });
+      await resolveSpawnFailure(error);
     });
   });
+}
+
+export function resolveValidationCommand(command: string): string {
+  if (process.platform !== "win32") {
+    return command;
+  }
+
+  const lowerCommand = command.toLowerCase();
+  const windowsCommandMap: Record<string, string> = {
+    npm: "npm.cmd",
+    npx: "npx.cmd",
+    pnpm: "pnpm.cmd",
+    pnpx: "pnpx.cmd",
+    yarn: "yarn.cmd",
+    bun: "bun.exe"
+  };
+
+  return windowsCommandMap[lowerCommand] || command;
+}
+
+function getSpawnInvocation(resolvedCommand: string, args: string[]): { command: string; args: string[] } {
+  if (process.platform === "win32" && resolvedCommand.toLowerCase().endsWith(".cmd")) {
+    return {
+      command: process.env.ComSpec || "cmd.exe",
+      args: ["/d", "/s", "/c", quoteWindowsCommand([resolvedCommand, ...args])]
+    };
+  }
+
+  return {
+    command: resolvedCommand,
+    args
+  };
+}
+
+function quoteWindowsCommand(parts: string[]): string {
+  return parts.map(quoteWindowsArg).join(" ");
+}
+
+function quoteWindowsArg(value: string): string {
+  if (!/[\s"&()^|<>]/u.test(value)) {
+    return value;
+  }
+
+  return `"${value.replace(/"/g, '\\"')}"`;
 }

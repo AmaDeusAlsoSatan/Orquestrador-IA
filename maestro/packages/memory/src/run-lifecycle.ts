@@ -145,8 +145,9 @@ export async function captureRunGitDiff(
 ): Promise<CaptureRunGitDiffResult> {
   const source = options.source || "ORIGINAL_REPO";
   const repoPath = options.repoPath || project.repoPath;
-  const state = await inspectGitRepo(repoPath);
-  const rawDiff = await getGitDiff(repoPath);
+  const includeUntracked = source === "WORKSPACE_SANDBOX";
+  const state = await inspectGitRepo(repoPath, { includeUntracked });
+  const rawDiff = await getGitDiff(repoPath, { includeUntracked });
   const { content: diffContent, truncated } = truncateDiff(rawDiff);
   const afterPath = path.join(run.path, "12-git-after-executor.md");
   const diffPath = path.join(run.path, "13-git-diff.md");
@@ -385,6 +386,7 @@ function renderGitState(title: string, state: GitRepoState, source: CaptureDiffS
 ## Snapshot
 
 - Diff source: ${source}
+- Untracked files included in generated diff: ${state.untrackedFilesIncludedInDiff ? "yes" : "no"}
 - Captured at: ${state.capturedAt}
 - Repository path: ${state.repoPath}
 - Is Git repo: ${state.isGitRepo ? "yes" : "no"}
@@ -420,6 +422,8 @@ function renderChangedFiles(state: GitRepoState, source: CaptureDiffSource): str
   return `# Changed Files
 
 Diff source: ${source}
+
+Untracked files included in generated diff: ${state.untrackedFilesIncludedInDiff ? "yes" : "no"}
 
 ## Modified
 
