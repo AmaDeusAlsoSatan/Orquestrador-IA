@@ -18,8 +18,17 @@ export interface PrepareAgentInvocationResult {
   outputPath: string;
 }
 
+export interface AttachAgentInvocationOutputResult {
+  invocation: AgentInvocation;
+  outputPath: string;
+}
+
 export async function prepareAgentInvocation(options: PrepareAgentInvocationOptions): Promise<PrepareAgentInvocationResult> {
   const { run, project, profile, workspace, openClaudeConfig } = options;
+  if (run.status === "FINALIZED" || run.status === "BLOCKED") {
+    throw new Error(`Cannot invoke agent for run ${run.id} because it is ${run.status}. Create a new run or use a future audit mode.`);
+  }
+
   const stage = resolveStageForRole(profile.role);
   const prompt = await readPromptForStage(run, stage);
   const invocationId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${profile.id}`;
@@ -62,6 +71,7 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
     status: result.status,
     startedAt,
     completedAt,
+    blockedReason: result.blockedReason,
     errorMessage: result.errorMessage
   };
 
@@ -72,6 +82,32 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
     invocation,
     invocationDir,
     promptPath,
+    outputPath
+  };
+}
+
+export async function attachAgentInvocationOutput(
+  invocation: AgentInvocation,
+  sourceFilePath: string
+): Promise<AttachAgentInvocationOutputResult> {
+  const resolvedSourceFilePath = path.resolve(sourceFilePath);
+  const content = await fs.readFile(resolvedSourceFilePath, "utf8");
+  const outputPath = invocation.outputPath || path.join(path.dirname(invocation.inputPath), "02-output.md");
+  const updatedInvocation: AgentInvocation = {
+    ...invocation,
+    outputPath,
+    status: "SUCCEEDED",
+    completedAt: new Date().toISOString(),
+    blockedReason: undefined,
+    errorMessage: undefined
+  };
+
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, ensureTrailingNewline(content), "utf8");
+  await fs.writeFile(path.join(path.dirname(outputPath), "00-invocation.json"), `${JSON.stringify(updatedInvocation, null, 2)}\n`, "utf8");
+
+  return {
+    invocation: updatedInvocation,
     outputPath
   };
 }

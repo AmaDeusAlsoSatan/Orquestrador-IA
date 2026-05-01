@@ -28,6 +28,7 @@ export interface AgentInvocationResult {
   status: Extract<AgentRunStatus, "SUCCEEDED" | "FAILED" | "BLOCKED">;
   outputText?: string;
   outputPath?: string;
+  blockedReason?: string;
   errorMessage?: string;
 }
 
@@ -194,8 +195,10 @@ function createManualAdapter(provider: AgentProvider): AgentProviderAdapter {
   return {
     provider,
     async invoke(input) {
+      const blockedReason = "Awaiting manual output";
       return {
         status: "BLOCKED",
+        blockedReason,
         outputText: [
           "# Manual Agent Invocation",
           "",
@@ -204,6 +207,7 @@ function createManualAdapter(provider: AgentProvider): AgentProviderAdapter {
           `Stage: ${input.stage}`,
           "",
           "Status: BLOCKED",
+          `Reason: ${blockedReason}`,
           "",
           "This provider does not call an external model automatically.",
           "Copy `01-input-prompt.md` to the intended agent/tool and attach the output back to Maestro."
@@ -230,8 +234,10 @@ export async function invokeOpenClaude(
   const configured = Boolean(config.executablePath && config.workingDirectory);
 
   if (!configured) {
+    const blockedReason = "Provider not configured";
     return {
       status: "BLOCKED",
+      blockedReason,
       errorMessage: [
         `${provider} adapter not configured.`,
         "Maestro intentionally does not reuse any global OpenClaude installation.",
@@ -242,6 +248,7 @@ export async function invokeOpenClaude(
 
   return {
     status: "BLOCKED",
+    blockedReason: "Automatic execution disabled",
     errorMessage: [
       `${provider} adapter stub reached for invocation ${input.invocationId}.`,
       "Automatic OpenClaude execution is not enabled in this phase."

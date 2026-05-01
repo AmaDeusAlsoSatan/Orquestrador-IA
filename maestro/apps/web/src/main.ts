@@ -102,6 +102,7 @@ interface AgentInvocation {
   status: string;
   startedAt?: string;
   completedAt?: string;
+  blockedReason?: string;
   errorMessage?: string;
 }
 
@@ -748,6 +749,9 @@ function renderAgentPanel(detail: RunDetail): string {
               </div>
               <p>${escapeHtml(profile.description)}</p>
               ${latest ? `<p class="muted">Ultima invocation: ${escapeHtml(latest.id)}</p>` : ""}
+              ${latest?.blockedReason ? `<p class="muted">Motivo: ${escapeHtml(latest.blockedReason)}</p>` : ""}
+              ${latest?.errorMessage ? `<p class="muted">Mensagem: ${escapeHtml(latest.errorMessage)}</p>` : ""}
+              ${latest?.status === "BLOCKED" ? renderAgentOutputAttach(latest) : ""}
               <div class="button-row" style="margin-top: 0.75rem;">
                 <button data-agent-invoke="${escapeHtml(profile.role)}">Preparar invocacao</button>
               </div>
@@ -755,6 +759,18 @@ function renderAgentPanel(detail: RunDetail): string {
           `;
         }).join("")}
       </div>
+    </div>
+  `;
+}
+
+function renderAgentOutputAttach(invocation: AgentInvocation): string {
+  return `
+    <div class="field" style="margin-top: 0.75rem;">
+      <label>Anexar output manual desta invocation</label>
+      <textarea data-agent-output-for="${escapeHtml(invocation.id)}" placeholder="Cole aqui a resposta do agente manual/stub..."></textarea>
+    </div>
+    <div class="button-row" style="margin-top: 0.5rem;">
+      <button class="primary" data-agent-attach-output="${escapeHtml(invocation.id)}">Anexar output da invocation</button>
     </div>
   `;
 }
@@ -963,6 +979,11 @@ async function handleClick(event: Event): Promise<void> {
 
   if (button.dataset.agentInvoke) {
     await invokeAgent(button.dataset.agentInvoke);
+    return;
+  }
+
+  if (button.dataset.agentAttachOutput) {
+    await attachAgentOutput(button.dataset.agentAttachOutput);
     return;
   }
 
@@ -1193,6 +1214,28 @@ async function invokeAgent(role: string): Promise<void> {
     pushActionLog(`AGENT_${role}`, "OK", "Invocacao de agente preparada.", result);
     await refreshProjectData();
   }, `Invocacao preparada para ${role}.`);
+}
+
+async function attachAgentOutput(invocationId: string): Promise<void> {
+  if (!state.selectedRunId) return;
+  const textarea = Array.from(document.querySelectorAll<HTMLTextAreaElement>("textarea[data-agent-output-for]"))
+    .find((item) => item.dataset.agentOutputFor === invocationId);
+  const content = textarea?.value.trim() || "";
+
+  if (!content) {
+    state.toast = "Cole o output do agente antes de anexar.";
+    render();
+    return;
+  }
+
+  await runBusy(async () => {
+    const result = await api(`/api/runs/${state.selectedRunId}/agents/${encodeURIComponent(invocationId)}/attach-output`, {
+      method: "POST",
+      body: { content }
+    });
+    pushActionLog("AGENT_ATTACH_OUTPUT", "OK", "Output manual anexado a invocation.", result);
+    await refreshProjectData();
+  }, "Output da invocation anexado.");
 }
 
 async function prepareKiroExecution(): Promise<void> {

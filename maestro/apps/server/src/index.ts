@@ -4,6 +4,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import {
   DEFAULT_AGENT_MODEL_MAP,
+  attachAgentInvocationOutput,
   createDefaultAgentProfiles,
   prepareAgentInvocation,
   type OpenClaudeAdapterConfig
@@ -26,6 +27,7 @@ import {
   upsertTask,
   upsertValidationRun,
   type HumanDecisionStatus,
+  type AgentInvocation,
   type AgentRole,
   type HumanReviewDecision,
   type MaestroState,
@@ -261,6 +263,9 @@ async function routeRunRequest(context: RequestContext): Promise<unknown> {
   if (method === "POST" && segments[3] === "attach-commit") return attachCommitRoute(context, runId);
   if (method === "GET" && segments[3] === "agents") return getRunAgentsRoute(context, runId);
   if (method === "POST" && segments[3] === "agents" && segments[4] === "invoke") return invokeRunAgentRoute(context, runId);
+  if (method === "POST" && segments[3] === "agents" && segments[5] === "attach-output") {
+    return attachRunAgentOutputRoute(context, runId, segments[4]);
+  }
   if (method === "GET" && segments[3] === "timeline") return getRunTimeline(context, runId);
   if (method === "GET" && segments[3] === "files") return getRunFile(context, runId, segments.slice(4).join("/"));
 
@@ -579,6 +584,11 @@ async function invokeRunAgentRoute(context: RequestContext, runId: string) {
   const { state } = await loadState(context.homeDir);
   const run = getRunOrThrow(state, runId);
   const project = getProjectOrThrow(state, run.projectId);
+
+  if (run.status === "FINALIZED" || run.status === "BLOCKED") {
+    throw new ApiError(409, `Cannot invoke agent for run ${run.id} because it is ${run.status}. Create a new run or use a future audit mode.`);
+  }
+
   const profile = getAgentProfileForRoleOrThrow(state, role, project.id);
   const workspace = state.workspaces.find((item) => item.runId === run.id);
   const result = await prepareAgentInvocation({
@@ -591,6 +601,54 @@ async function invokeRunAgentRoute(context: RequestContext, runId: string) {
 
   await saveState(context.homeDir, upsertAgentInvocation(state, result.invocation));
   return result;
+}
+
+async function attachRunAgentOutputRoute(context: RequestContext, runId: string, invocationId: string | undefined) {
+  if (!invocationId) {
+    throw new ApiError(400, "Agent invocation id is required.");
+  }
+
+  const body = asRecord(context.body);
+  const content = requireString(body.content, "content");
+  const { state } = await loadState(context.homeDir);
+  const run = getRunOrThrow(state, runId);
+  const project = getProjectOrThrow(state, run.projectId);
+  const invocation = getAgentInvocationOrThrow(state, invocationId);
+
+  if (invocation.runId !== run.id) {
+    throw new ApiError(400, `Invocation ${invocation.id} does not belong to run ${run.id}.`);
+  }
+
+  if (run.status === "FINALIZED" || run.status === "BLOCKED") {
+    throw new ApiError(409, `Cannot attach agent output for run ${run.id} because it is ${run.status}. Create a new run or use a future audit mode.`);
+  }
+
+  const attachmentPath = path.join(run.path, ".ui-attachments", `agent-${invocation.id}-${Date.now()}.md`);
+  await fs.mkdir(path.dirname(attachmentPath), { recursive: true });
+  await fs.writeFile(attachmentPath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
+
+  let nextState: MaestroState = state;
+  const stage = runStageForAgentInvocationStage(invocation.stage);
+  let runRecord: RunRecord | undefined;
+  let stageOutputPath: string | undefined;
+
+  if (stage) {
+    const attachResult = await attachRunStage(project, run, stage, attachmentPath);
+    nextState = upsertRun(nextState, attachResult.runRecord);
+    runRecord = attachResult.runRecord;
+    stageOutputPath = attachResult.outputPath;
+  }
+
+  const outputResult = await attachAgentInvocationOutput(invocation, attachmentPath);
+  nextState = upsertAgentInvocation(nextState, outputResult.invocation);
+  await saveState(context.homeDir, nextState);
+
+  return {
+    invocation: outputResult.invocation,
+    outputPath: outputResult.outputPath,
+    stageOutputPath,
+    run: runRecord || run
+  };
 }
 
 async function getRunTimeline(context: RequestContext, runId: string) {
@@ -1473,6 +1531,30 @@ function getAgentProfileForRoleOrThrow(state: MaestroState, role: AgentRole, pro
   }
 
   return profile;
+}
+
+function getAgentInvocationOrThrow(state: MaestroState, invocationId: string): AgentInvocation {
+  const invocation = state.agentInvocations.find((item) => item.id === invocationId);
+
+  if (!invocation) {
+    throw new ApiError(404, `Agent invocation not found: ${invocationId}`);
+  }
+
+  return invocation;
+}
+
+function runStageForAgentInvocationStage(stage: AgentInvocation["stage"]): "supervisor" | "executor" | "reviewer" | undefined {
+  switch (stage) {
+    case "SUPERVISOR_PLAN":
+      return "supervisor";
+    case "EXECUTOR_IMPLEMENT":
+      return "executor";
+    case "REVIEWER_REVIEW":
+      return "reviewer";
+    case "CEO_INTAKE":
+    case "QA_VALIDATE":
+      return undefined;
+  }
 }
 
 function getTaskOrThrow(state: MaestroState, taskId: string): ProjectTask {

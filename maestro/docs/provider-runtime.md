@@ -101,6 +101,14 @@ CEO                 -> 01-goal.md
 
 Manual adapters create the prompt and then return `BLOCKED`, because they are waiting for manual output. This is deliberate. It formalizes the old copy/paste flow without pretending automation is already available.
 
+Status policy:
+
+- `BLOCKED` means the invocation is waiting on a human output or missing provider configuration.
+- `FAILED` means an adapter attempted work and hit an actual runtime error.
+- `SUCCEEDED` means an output was attached or produced and recorded by Maestro.
+
+Normal agent invocations are blocked for runs in `FINALIZED` or `BLOCKED` status. A future audit mode can inspect completed runs, but execution-stage invocations should not mutate a closed run.
+
 ## Commands
 
 ```bash
@@ -109,12 +117,19 @@ corepack pnpm run maestro agents list
 corepack pnpm run maestro agents show --agent cto-supervisor
 corepack pnpm run maestro agents update --agent full-stack-executor --provider kiro_openclaude --model best-coding-free
 corepack pnpm run maestro agent invoke --run <run-id> --role CTO_SUPERVISOR
+corepack pnpm run maestro agent attach-output --invocation <invocation-id> --file ./codex-plan.md
 ```
+
+For stage-backed roles, `agent attach-output` also updates the matching run stage:
+
+- `SUPERVISOR_PLAN` -> `07-supervisor-output.md`
+- `EXECUTOR_IMPLEMENT` -> `08-executor-output.md`
+- `REVIEWER_REVIEW` -> `09-reviewer-output.md`
 
 ## Future Work
 
 - Configure isolated Maestro OpenClaude runtime.
 - Add a real `openclaude` adapter implementation.
 - Add queue/heartbeat worker.
-- Automatically attach successful outputs back to run stages.
+- Add audit-only invocations for finalized runs.
 - Keep Human Review Gate as the final acceptance authority.

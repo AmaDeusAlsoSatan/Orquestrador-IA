@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import {
   AGENT_DEFINITIONS,
   DEFAULT_AGENT_MODEL_MAP,
+  attachAgentInvocationOutput,
   createDefaultAgentProfiles,
   prepareAgentInvocation,
   type OpenClaudeAdapterConfig
@@ -33,6 +34,7 @@ import {
   upsertValidationProfile,
   upsertValidationRun,
   type HumanDecisionStatus,
+  type AgentInvocation,
   type AgentProfile,
   type AgentProvider,
   type AgentRole,
@@ -227,6 +229,9 @@ async function handleAgentCommand(homeDir: string, args: string[]): Promise<void
     case "invoke":
       await invokeAgentCommand(homeDir, rest);
       break;
+    case "attach-output":
+      await attachAgentOutputCommand(homeDir, rest);
+      break;
     case "help":
     case "--help":
     case "-h":
@@ -328,8 +333,48 @@ async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void
   console.log(`Status: ${result.invocation.status}`);
   console.log(`Prompt: ${result.promptPath}`);
   console.log(`Output: ${result.outputPath}`);
+  if (result.invocation.blockedReason) {
+    console.log(`Reason: ${result.invocation.blockedReason}`);
+  }
   if (result.invocation.errorMessage) {
     console.log(`Error: ${result.invocation.errorMessage}`);
+  }
+}
+
+async function attachAgentOutputCommand(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const invocationId = getRequiredFlag(flags, "invocation");
+  const filePath = path.resolve(getRequiredFlag(flags, "file"));
+  const state = await loadStateWithFriendlyError(homeDir);
+  const invocation = findAgentInvocationOrThrow(state.agentInvocations, invocationId);
+  const run = findRunOrThrow(state.runs, invocation.runId);
+  const project = findProjectForRunOrThrow(state.projects, run);
+  const stage = runStageForAgentInvocationStage(invocation.stage);
+
+  if (run.status === "FINALIZED" || run.status === "BLOCKED") {
+    throw new Error(`Cannot attach agent output for run ${run.id} because it is ${run.status}. Create a new run or use a future audit mode.`);
+  }
+
+  let nextState: MaestroState = state;
+  let stageOutputPath: string | undefined;
+
+  if (stage) {
+    const attachResult = await attachRunStage(project, run, stage, filePath);
+    nextState = upsertRun(nextState, attachResult.runRecord);
+    stageOutputPath = attachResult.outputPath;
+  }
+
+  const outputResult = await attachAgentInvocationOutput(invocation, filePath);
+  nextState = upsertAgentInvocation(nextState, outputResult.invocation);
+  await saveState(homeDir, nextState);
+
+  console.log(`Agent invocation output attached: ${outputResult.invocation.id}`);
+  console.log(`Invocation status: ${outputResult.invocation.status}`);
+  console.log(`Invocation output: ${outputResult.outputPath}`);
+  if (stageOutputPath) {
+    console.log(`Run stage output: ${stageOutputPath}`);
+  } else {
+    console.log("Run stage output: not applicable for this invocation stage.");
   }
 }
 
@@ -3249,6 +3294,16 @@ function findAgentProfileOrThrow(profiles: AgentProfile[], agentId: string): Age
   return profile;
 }
 
+function findAgentInvocationOrThrow(invocations: AgentInvocation[], invocationId: string): AgentInvocation {
+  const invocation = invocations.find((item) => item.id === invocationId);
+
+  if (!invocation) {
+    throw new Error(`Agent invocation not found: ${invocationId}`);
+  }
+
+  return invocation;
+}
+
 function findAgentProfileForRoleOrThrow(profiles: AgentProfile[], role: AgentRole, projectId: string): AgentProfile {
   const profile = profiles.find((item) => item.role === role && (!item.projectIds || item.projectIds.includes(projectId)));
 
@@ -3257,6 +3312,20 @@ function findAgentProfileForRoleOrThrow(profiles: AgentProfile[], role: AgentRol
   }
 
   return profile;
+}
+
+function runStageForAgentInvocationStage(stage: AgentInvocation["stage"]): RunStage | undefined {
+  switch (stage) {
+    case "SUPERVISOR_PLAN":
+      return "supervisor";
+    case "EXECUTOR_IMPLEMENT":
+      return "executor";
+    case "REVIEWER_REVIEW":
+      return "reviewer";
+    case "CEO_INTAKE":
+    case "QA_VALIDATE":
+      return undefined;
+  }
 }
 
 function parseAgentProvider(value: string): AgentProvider {
@@ -3720,6 +3789,7 @@ Usage:
   maestro agents show --agent <id>
   maestro agents update --agent <id> [--provider <provider>] [--model <model>]
   maestro agent invoke --run <id> --role <role>
+  maestro agent attach-output --invocation <id> --file <path>
   maestro project add [--name <name>] [--repo-path <path>] [--description <text>] [--stack <a,b>] [--status <status>] [--priority <priority>]
   maestro project list
   maestro project show <id>
@@ -3786,6 +3856,7 @@ function printAgentHelp(): void {
   console.log(`Agent invocation commands:
 
   maestro agent invoke --run <id> --role <CEO|CTO_SUPERVISOR|FULL_STACK_EXECUTOR|CODE_REVIEWER|QA_VALIDATOR>
+  maestro agent attach-output --invocation <id> --file <path>
 `);
 }
 
@@ -4360,14 +4431,54 @@ async function runSmokeTest(homeDir: string, args: string[]): Promise<void> {
 
     const run = preparedRun.runRecord;
 
-    // Attach supervisor output
-    if (verbose) console.log("Attaching supervisor output...");
+    // Init default agents
+    if (verbose) console.log("Initializing default agents...");
+    const state3a = await loadState(smokeHomeDir);
+    let agentState: MaestroState = state3a;
+    for (const profile of createDefaultAgentProfiles()) {
+      const existing = agentState.agentProfiles.find((item) => item.id === profile.id);
+      agentState = upsertAgentProfile(agentState, existing ? { ...profile, createdAt: existing.createdAt } : profile);
+    }
+    await saveState(smokeHomeDir, agentState);
+    steps.push({ name: "Init default agents", passed: true });
+
+    // Invoke supervisor agent
+    if (verbose) console.log("Preparing supervisor agent invocation...");
+    const state3b = await loadState(smokeHomeDir);
+    const supervisorProfile = findAgentProfileForRoleOrThrow(state3b.agentProfiles, "CTO_SUPERVISOR", project.id);
+    const supervisorInvocationResult = await prepareAgentInvocation({
+      run,
+      project,
+      profile: supervisorProfile,
+      openClaudeConfig: {}
+    });
+    await saveState(smokeHomeDir, upsertAgentInvocation(state3b, supervisorInvocationResult.invocation));
+    const invocationMetadataExists = await fileExists(path.join(supervisorInvocationResult.invocationDir, "00-invocation.json"));
+    const invocationPromptExists = await fileExists(supervisorInvocationResult.promptPath);
+    if (supervisorInvocationResult.invocation.status !== "BLOCKED") {
+      errors.push(`Supervisor invocation expected BLOCKED, got ${supervisorInvocationResult.invocation.status}`);
+    }
+    if (!invocationMetadataExists || !invocationPromptExists) {
+      errors.push("Supervisor invocation artifacts were not created.");
+    }
+    steps.push({
+      name: "Agent invoke supervisor",
+      passed: supervisorInvocationResult.invocation.status === "BLOCKED" && invocationMetadataExists && invocationPromptExists
+    });
+
+    // Attach supervisor output through invocation
+    if (verbose) console.log("Attaching supervisor output through agent invocation...");
     const supervisorOutput = "# Plano\n\nImplementar feature de teste.\n\n## Arquivos\n\n- src/test.ts\n\n## Acceptance Criteria\n\n- [ ] Feature implementada";
     const supervisorFile = path.join(smokeTestDir, "supervisor-output.md");
     await fs.writeFile(supervisorFile, supervisorOutput, "utf8");
     const state4 = await loadState(smokeHomeDir);
     const attachResult1 = await attachRunStage(project, run, "supervisor", supervisorFile);
-    await saveState(smokeHomeDir, upsertRun(state4, attachResult1.runRecord));
+    const agentOutputResult = await attachAgentInvocationOutput(supervisorInvocationResult.invocation, supervisorFile);
+    const state4a = upsertRun(state4, attachResult1.runRecord);
+    await saveState(smokeHomeDir, upsertAgentInvocation(state4a, agentOutputResult.invocation));
+    const state4b = await loadState(smokeHomeDir);
+    const storedInvocation = state4b.agentInvocations.find((item) => item.id === agentOutputResult.invocation.id);
+    steps.push({ name: "Agent attach output", passed: storedInvocation?.status === "SUCCEEDED" });
     steps.push({ name: "Attach supervisor output", passed: true });
 
     // Create workspace

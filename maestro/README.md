@@ -1119,14 +1119,23 @@ Prepare an invocation for a run:
 corepack pnpm run maestro agent invoke --run <run-id> --role CTO_SUPERVISOR
 ```
 
+Attach the manual/stub output back to the invocation:
+
+```bash
+corepack pnpm run maestro agent attach-output --invocation <invocation-id> --file ./codex-plan.md
+```
+
 The first runtime is intentionally safe:
 
 - `manual` and `codex_manual` create invocation prompt files and return `BLOCKED`, waiting for manual output.
 - `openclaude` and `kiro_openclaude` are safe stubs until an isolated Maestro OpenClaude runtime is configured.
+- `BLOCKED` means the invocation is waiting for manual output or provider configuration; `FAILED` is reserved for real runtime errors.
+- Normal agent invocations are blocked once a run is `FINALIZED` or `BLOCKED`; audit-only invocation is future work.
 - Maestro does not reuse any OpenClaude config from another assistant.
 - Generated invocations live under `data/runs/<project>/<run>/agents/<invocation-id>/`.
+- Stage-backed invocation outputs are also attached to the run: Supervisor -> `07-supervisor-output.md`, Executor -> `08-executor-output.md`, Reviewer -> `09-reviewer-output.md`.
 
-The UI Run Console includes an **Agentes da Run** panel for preparing Supervisor, Executor, and Reviewer invocations.
+The UI Run Console includes an **Agentes da Run** panel for preparing Supervisor, Executor, and Reviewer invocations. When an invocation is `BLOCKED`, the panel shows a textarea to attach the manual output without leaving the UI.
 
 Read the architecture notes in [docs/provider-runtime.md](docs/provider-runtime.md).
 

@@ -150,6 +150,7 @@ export interface AgentInvocation {
   status: AgentRunStatus;
   startedAt?: string;
   completedAt?: string;
+  blockedReason?: string;
   errorMessage?: string;
 }
 
