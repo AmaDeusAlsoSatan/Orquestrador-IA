@@ -33,6 +33,7 @@ import {
 } from "@maestro/core";
 import {
   appendTaskAddedToBacklog,
+  attachFinalCommit,
   createContextPack,
   createHandoffPackage,
   createProjectVault,
@@ -118,6 +119,11 @@ const TEXT_FILE_ALLOWLIST = new Set([
   "18-promotion-summary.md",
   "19-promotion-check.md",
   "20-apply-plan.md",
+  "21-apply-preflight.md",
+  "22-apply-result.md",
+  "23-applied-diff.md",
+  "25-validation-original.md",
+  "26-final-commit.md",
   "handoff/00-read-this-first.md",
   "handoff/01-executor-rules.md",
   "handoff/04-task-contract.md",
@@ -240,6 +246,7 @@ async function routeRunRequest(context: RequestContext): Promise<unknown> {
   if (method === "GET" && segments.length === 3) return getRun(context, runId);
   if (method === "POST" && segments[3] === "action") return runControlledAction(context, runId);
   if (method === "POST" && segments[3] === "attach") return attachRunOutputRoute(context, runId);
+  if (method === "POST" && segments[3] === "attach-commit") return attachCommitRoute(context, runId);
   if (method === "GET" && segments[3] === "files") return getRunFile(context, runId, segments.slice(4).join("/"));
 
   throw new ApiError(404, "Run route not found.");
@@ -530,6 +537,19 @@ async function attachRunOutputRoute(context: RequestContext, runId: string) {
   const result = await attachRunStage(project, run, stage, attachmentPath);
   await saveState(context.homeDir, upsertRun(state, result.runRecord));
   return { run: result.runRecord, outputPath: result.outputPath };
+}
+
+async function attachCommitRoute(context: RequestContext, runId: string) {
+  const body = asRecord(context.body);
+  const commitSha = requireString(body.commit, "commit");
+  const commitMessage = requireString(body.message, "message");
+  const { state } = await loadState(context.homeDir);
+  const run = getRunOrThrow(state, runId);
+  const project = getProjectOrThrow(state, run.projectId);
+  
+  const result = await attachFinalCommit(project, run, commitSha, commitMessage);
+  await saveState(context.homeDir, upsertRun(state, result.runRecord));
+  return { run: result.runRecord, commitFilePath: result.commitFilePath };
 }
 
 async function runControlledAction(context: RequestContext, runId: string) {

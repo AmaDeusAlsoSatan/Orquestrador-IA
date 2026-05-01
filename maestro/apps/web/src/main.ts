@@ -34,6 +34,12 @@ interface Run {
   path: string;
   createdAt: string;
   updatedAt: string;
+  finalizedAt?: string;
+  finalCommit?: {
+    sha: string;
+    message: string;
+    recordedAt: string;
+  };
 }
 
 interface ChecklistItem {
@@ -367,6 +373,12 @@ function renderTasks(): string {
 }
 
 function renderRuns(): string {
+  const activeRuns = state.runs.filter((run) => 
+    ["PREPARED", "SUPERVISOR_PLANNED", "EXECUTOR_READY", "EXECUTOR_REPORTED", "REVIEW_READY", "REVIEWED"].includes(run.status)
+  );
+  const completedRuns = state.runs.filter((run) => run.status === "FINALIZED");
+  const blockedRuns = state.runs.filter((run) => run.status === "BLOCKED");
+
   return `
     <section class="section-title">
       <div>
@@ -376,7 +388,19 @@ function renderRuns(): string {
     </section>
     <div class="split">
       <div class="list">
-        ${state.runs.map(renderRunItem).join("") || `<div class="empty">Nenhuma run preparada.</div>`}
+        ${activeRuns.length > 0 ? `
+          <h3 style="margin: 0.5rem 0;">Runs Ativas</h3>
+          ${activeRuns.map(renderRunItem).join("")}
+        ` : ""}
+        ${completedRuns.length > 0 ? `
+          <h3 style="margin: 1rem 0 0.5rem 0;">Runs Concluídas</h3>
+          ${completedRuns.map(renderCompletedRunItem).join("")}
+        ` : ""}
+        ${blockedRuns.length > 0 ? `
+          <h3 style="margin: 1rem 0 0.5rem 0;">Runs Bloqueadas</h3>
+          ${blockedRuns.map(renderRunItem).join("")}
+        ` : ""}
+        ${state.runs.length === 0 ? `<div class="empty">Nenhuma run preparada.</div>` : ""}
       </div>
       ${renderSelectedRun()}
     </div>
@@ -448,33 +472,37 @@ function renderSelectedRun(): string {
   const detail = state.runDetail;
   if (!detail) return `<div class="empty">Selecione uma run.</div>`;
 
+  const isFinalized = detail.run.status === "FINALIZED";
+
   return `
     <div class="card">
       <h3>${escapeHtml(detail.run.id)}</h3>
-      ${renderNextActionPanel(detail)}
+      ${isFinalized ? renderFinalizedRunPanel(detail) : renderNextActionPanel(detail)}
       <div class="badge-row">
-        <span class="badge">${escapeHtml(detail.run.status)}</span>
+        <span class="badge ${isFinalized ? "ok" : ""}">${escapeHtml(detail.run.status)}</span>
         ${detail.workspace ? `<span class="badge ok">workspace ${escapeHtml(detail.workspace.status)}</span>` : `<span class="badge warn">sem workspace</span>`}
         ${detail.promotion ? `<span class="badge">${escapeHtml(detail.promotion.status)}</span>` : `<span class="badge">sem patch</span>`}
       </div>
       ${renderWorkspacePanel(detail)}
       <h3>Checklist</h3>
       <div class="checklist">${detail.checklist.map((item) => `<div class="check"><span class="dot ${item.done ? "done" : ""}">${item.done ? "✓" : ""}</span>${escapeHtml(item.label)}</div>`).join("")}</div>
-      <h3>Acoes</h3>
-      <div class="button-row">
-        <button class="primary" data-command="prepare-kiro" ${hasSupervisorOutput(detail) ? "" : "disabled"}>Preparar execucao do Kiro</button>
-        ${actionButton("CREATE_WORKSPACE", "Criar workspace")}
-        ${actionButton("GENERATE_HANDOFF", "Gerar Kiro Handoff")}
-        ${actionButton("CAPTURE_DIFF", "Capturar diff")}
-        ${actionButton("GENERATE_REVIEW_PACKAGE", "Gerar Review Package")}
-        ${actionButton("PATCH_EXPORT", "Exportar patch")}
-        ${actionButton("PATCH_CHECK", "Checar patch")}
-        ${actionButton("PATCH_PLAN", "Gerar apply plan")}
-        ${actionButton("VALIDATION_WORKSPACE", "Validar workspace")}
-        ${actionButton("VALIDATION_ORIGINAL", "Validar original")}
-        ${actionButton("FINALIZE", "Finalizar run")}
-        <button disabled title="Futuro passo com confirmacao explicita">Patch apply bloqueado</button>
-      </div>
+      ${isFinalized ? "" : `
+        <h3>Acoes</h3>
+        <div class="button-row">
+          <button class="primary" data-command="prepare-kiro" ${hasSupervisorOutput(detail) ? "" : "disabled"}>Preparar execucao do Kiro</button>
+          ${actionButton("CREATE_WORKSPACE", "Criar workspace")}
+          ${actionButton("GENERATE_HANDOFF", "Gerar Kiro Handoff")}
+          ${actionButton("CAPTURE_DIFF", "Capturar diff")}
+          ${actionButton("GENERATE_REVIEW_PACKAGE", "Gerar Review Package")}
+          ${actionButton("PATCH_EXPORT", "Exportar patch")}
+          ${actionButton("PATCH_CHECK", "Checar patch")}
+          ${actionButton("PATCH_PLAN", "Gerar apply plan")}
+          ${actionButton("VALIDATION_WORKSPACE", "Validar workspace")}
+          ${actionButton("VALIDATION_ORIGINAL", "Validar original")}
+          ${actionButton("FINALIZE", "Finalizar run")}
+          <button disabled title="Futuro passo com confirmacao explicita">Patch apply bloqueado</button>
+        </div>
+      `}
       <h3>Prompts e arquivos</h3>
       <div class="button-row">
         ${fileButton("03-codex-supervisor-prompt.md")}
@@ -487,6 +515,11 @@ function renderSelectedRun(): string {
         ${fileButton("review/08-codex-reviewer-prompt.md")}
         ${fileButton("13-git-diff.md")}
         ${fileButton("20-apply-plan.md")}
+        ${fileButton("10-final-summary.md")}
+        ${fileButton("15-human-decision.md")}
+        ${fileButton("23-applied-diff.md")}
+        ${fileButton("25-validation-original.md")}
+        ${detail.run.finalCommit ? fileButton("26-final-commit.md") : ""}
       </div>
       ${state.fileViewer ? `
         <div style="margin-top: 0.75rem;">
@@ -494,8 +527,54 @@ function renderSelectedRun(): string {
           <pre>${escapeHtml(state.fileViewer.content)}</pre>
         </div>
       ` : ""}
-      ${renderAttachAndDecision(detail)}
+      ${isFinalized ? "" : renderAttachAndDecision(detail)}
       ${renderActionLogs()}
+    </div>
+  `;
+}
+
+function renderAttachCommitForm(detail: RunDetail): string {
+  return `
+    <form class="card" id="attach-commit-form" style="margin-top: 1rem; box-shadow: none; background: var(--bg);">
+      <h4>Registrar commit final</h4>
+      <div class="field">
+        <label>Commit SHA</label>
+        <input name="commitSha" placeholder="ab89f4fe9dfe2ae10aa5789500b3db950be6e7c9" required />
+      </div>
+      <div class="field">
+        <label>Mensagem do commit</label>
+        <input name="commitMessage" placeholder="docs: add internal development guide" required />
+      </div>
+      <button class="primary" type="submit">Registrar commit</button>
+    </form>
+  `;
+}
+
+function renderFinalizedRunPanel(detail: RunDetail): string {
+  const run = detail.run;
+  const createdDate = new Date(run.createdAt).toLocaleString("pt-BR");
+  const finalizedDate = run.finalizedAt ? new Date(run.finalizedAt).toLocaleString("pt-BR") : "N/A";
+  
+  return `
+    <div class="card" style="background: var(--panel-soft); box-shadow: none; margin-bottom: 1rem;">
+      <h3>✓ Run Finalizada</h3>
+      <p class="muted">Esta run foi concluída. Use esta tela como histórico/auditoria.</p>
+      <div style="margin-top: 1rem;">
+        <p><strong>Task:</strong> ${escapeHtml(detail.task?.title || run.taskId || "N/A")}</p>
+        <p><strong>Decisão humana:</strong> ${escapeHtml(detail.decision?.status || "N/A")}</p>
+        <p><strong>Patch:</strong> ${escapeHtml(detail.promotion?.status || "N/A")}</p>
+        <p><strong>Validação original:</strong> ${detail.files.some((f) => f.fileName === "25-validation-original.md" && f.exists) ? "Executada" : "N/A"}</p>
+        ${run.finalCommit ? `
+          <p><strong>Commit final:</strong></p>
+          <pre style="margin: 0.5rem 0; padding: 0.5rem; background: var(--bg); border-radius: 4px;">${escapeHtml(run.finalCommit.sha)}
+${escapeHtml(run.finalCommit.message)}</pre>
+        ` : `
+          <p><strong>Commit final:</strong> Não registrado</p>
+          ${renderAttachCommitForm(detail)}
+        `}
+        <p><strong>Criada em:</strong> ${createdDate}</p>
+        <p><strong>Finalizada em:</strong> ${finalizedDate}</p>
+      </div>
     </div>
   `;
 }
@@ -660,6 +739,26 @@ function renderRunItem(run: Run): string {
   `;
 }
 
+function renderCompletedRunItem(run: Run): string {
+  const createdDate = new Date(run.createdAt).toLocaleDateString("pt-BR");
+  const finalizedDate = run.finalizedAt ? new Date(run.finalizedAt).toLocaleDateString("pt-BR") : "N/A";
+  
+  return `
+    <button class="item ${run.id === state.selectedRunId ? "active" : ""}" data-run-id="${run.id}">
+      <div class="item-header">
+        <span class="item-title">${escapeHtml(run.goal.slice(0, 60))}${run.goal.length > 60 ? "..." : ""}</span>
+        <span class="badge ok">${escapeHtml(run.status)}</span>
+      </div>
+      <p class="item-subtitle">${escapeHtml(run.taskId || "sem task vinculada")}</p>
+      <div class="badge-row" style="margin-top: 0.25rem;">
+        <span class="badge">Criada: ${createdDate}</span>
+        <span class="badge">Finalizada: ${finalizedDate}</span>
+        ${run.finalCommit ? `<span class="badge ok">Commit: ${escapeHtml(run.finalCommit.sha.slice(0, 7))}</span>` : ""}
+      </div>
+    </button>
+  `;
+}
+
 function renderTaskMiniList(tasks: Task[]): string {
   return tasks.length > 0
     ? `<div class="list">${tasks.slice(0, 6).map((task) => `<div class="item"><strong>${escapeHtml(task.title)}</strong><p class="muted">${escapeHtml(task.id)} | ${escapeHtml(task.priority)} | ${escapeHtml(task.status)}</p></div>`).join("")}</div>`
@@ -686,6 +785,7 @@ function bindForms(): void {
     form.addEventListener("submit", (event) => void submitAttach(event));
   });
   document.querySelector<HTMLFormElement>("#decision-form")?.addEventListener("submit", (event) => void submitDecision(event));
+  document.querySelector<HTMLFormElement>("#attach-commit-form")?.addEventListener("submit", (event) => void submitAttachCommit(event));
 }
 
 async function handleClick(event: Event): Promise<void> {
@@ -853,6 +953,29 @@ async function submitDecision(event: SubmitEvent): Promise<void> {
     });
     await refreshProjectData();
   }, "Decisao humana registrada.");
+}
+
+async function submitAttachCommit(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (!state.selectedRunId) return;
+  const form = new FormData(event.currentTarget as HTMLFormElement);
+  const commitSha = String(form.get("commitSha") || "").trim();
+  const commitMessage = String(form.get("commitMessage") || "").trim();
+  
+  if (!commitSha || !commitMessage) {
+    return showToast("Preencha o SHA e a mensagem do commit.");
+  }
+  
+  await runBusy(async () => {
+    await api(`/api/runs/${state.selectedRunId}/attach-commit`, {
+      method: "POST",
+      body: {
+        commit: commitSha,
+        message: commitMessage
+      }
+    });
+    await refreshProjectData();
+  }, "Commit final registrado.");
 }
 
 async function createTask(input: { title: string; description: string; priority: string; tags: string }): Promise<void> {
