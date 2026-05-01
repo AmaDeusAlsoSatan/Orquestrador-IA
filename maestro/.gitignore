@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.DS_Store
+*.log
+.tmp/
+
+# Local runtime state. Keep examples and directory placeholders in git.
+data/maestro.json
+data/logs/*
+!data/logs/.gitkeep
+data/runs/*
+!data/runs/.gitkeep
+data/vault/projects/*
+!data/vault/projects/.gitkeep

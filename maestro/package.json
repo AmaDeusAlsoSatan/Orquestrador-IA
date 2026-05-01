@@ -1,0 +1,20 @@
+{
+  "name": "maestro",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local control plane for AI-assisted project orchestration.",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "node scripts/workspace.mjs build",
+    "clean": "node scripts/workspace.mjs clean",
+    "maestro": "node apps/cli/dist/index.js",
+    "typecheck": "node scripts/workspace.mjs typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

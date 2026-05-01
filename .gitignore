@@ -1,0 +1,45 @@
+# Node modules
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Temporary files
+.tmp/
+tmp/
+temp/
+
+# Local runtime state
+maestro/data/maestro.json
+maestro/data/logs/*
+!maestro/data/logs/.gitkeep
+maestro/data/runs/*
+!maestro/data/runs/.gitkeep
+maestro/data/vault/projects/*
+!maestro/data/vault/projects/.gitkeep
+maestro/data/workspaces/*
+!maestro/data/workspaces/.gitkeep
