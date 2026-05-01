@@ -132,6 +132,13 @@ export interface RunRecord {
   createdAt: string;
   updatedAt: string;
   finalizedAt?: string;
+  finalCommit?: FinalCommit;
+}
+
+export interface FinalCommit {
+  sha: string;
+  message: string;
+  recordedAt: string;
 }
 
 export interface RunWorkspace {

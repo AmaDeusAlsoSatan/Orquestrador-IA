@@ -34,6 +34,11 @@ export interface FinalizeRunResult {
   missingHumanDecision: boolean;
 }
 
+export interface AttachFinalCommitResult {
+  runRecord: RunRecord;
+  commitFilePath: string;
+}
+
 export interface CaptureRunGitDiffResult {
   afterPath: string;
   diffPath: string;
@@ -63,7 +68,8 @@ const RUN_FILES = [
   "13-git-diff.md",
   "14-changed-files.md",
   "15-human-decision.md",
-  "16-workspace.md"
+  "16-workspace.md",
+  "26-final-commit.md"
 ];
 
 const STAGE_OUTPUT_FILES: Record<RunStage, string> = {
@@ -242,6 +248,66 @@ export async function finalizeRun(
     nextActionsPath,
     missingGitDiff: !gitEvidence.diffCaptured,
     missingHumanDecision: !humanDecision && !hasHumanDecisionFile
+  };
+}
+
+export async function attachFinalCommit(
+  project: Project,
+  run: RunRecord,
+  commitSha: string,
+  commitMessage: string
+): Promise<AttachFinalCommitResult> {
+  if (run.status !== "FINALIZED") {
+    throw new Error(`Cannot attach commit to run with status ${run.status}. Run must be FINALIZED.`);
+  }
+
+  const trimmedSha = commitSha.trim();
+  const trimmedMessage = commitMessage.trim();
+
+  if (!trimmedSha) {
+    throw new Error("Commit SHA is required.");
+  }
+
+  if (!trimmedMessage) {
+    throw new Error("Commit message is required.");
+  }
+
+  const recordedAt = new Date().toISOString();
+  const commitFilePath = path.join(run.path, "26-final-commit.md");
+
+  const nextRun: RunRecord = {
+    ...run,
+    finalCommit: {
+      sha: trimmedSha,
+      message: trimmedMessage,
+      recordedAt
+    },
+    updatedAt: recordedAt
+  };
+
+  await fs.writeFile(
+    commitFilePath,
+    renderFinalCommit(project, trimmedSha, trimmedMessage, recordedAt),
+    "utf8"
+  );
+
+  await appendRunLog(nextRun, "Final commit recorded", [
+    `Commit: ${trimmedSha}`,
+    `Message: ${trimmedMessage}`,
+    `File: ${commitFilePath}`
+  ]);
+
+  const existingMetadata = await readRunMetadata(run.path);
+  const metadata: RunMetadata = {
+    ...existingMetadata,
+    updatedAt: recordedAt
+  };
+
+  await writeRunMetadata(run.path, metadata);
+
+  return {
+    runRecord: nextRun,
+    commitFilePath
   };
 }
 
@@ -548,4 +614,30 @@ function renderNextActionsAppend(run: RunRecord): string {
 
 function ensureTrailingNewline(value: string): string {
   return value.endsWith("\n") ? value : `${value}\n`;
+}
+
+function renderFinalCommit(project: Project, sha: string, message: string, recordedAt: string): string {
+  return `# Final Commit
+
+## Repository
+
+${project.name} (${project.id})
+
+## Commit
+
+\`${sha}\`
+
+## Message
+
+${message}
+
+## Recorded at
+
+${recordedAt}
+
+---
+
+This commit was manually created in the original repository after the patch was applied and validated.
+The Maestro does not create commits automatically - this record was added for audit and tracking purposes.
+`;
 }

@@ -885,6 +885,71 @@ Bugs found and fixed during the pilot run:
 
 **The Maestro is ready for real tasks.**
 
+## Completed Runs / Run Archive
+
+After a run is finalized and the changes are manually committed to the original repository, you can record the final commit in Maestro for audit and tracking purposes.
+
+### Recording the Final Commit
+
+```bash
+corepack pnpm run maestro run attach-commit --run <run-id> --commit <sha> --message <message>
+```
+
+Example:
+
+```bash
+corepack pnpm run maestro run attach-commit --run 2026-05-01T00-57-10-466Z-task-adicionar-readme-interno-description-criar- --commit ab89f4fe9dfe2ae10aa5789500b3db950be6e7c9 --message "docs: add internal development guide"
+```
+
+This command:
+- Creates `26-final-commit.md` in the run folder
+- Records the commit SHA, message, and timestamp
+- Updates the run record in `maestro.json`
+- Provides audit trail for completed deliveries
+
+### Important Notes
+
+- The run must be in `FINALIZED` status to attach a commit
+- Maestro does NOT create commits automatically - this command only records commits you made manually
+- The commit should exist in the original repository before recording it
+- This is for tracking and audit purposes only
+
+### Viewing Completed Runs
+
+Use `maestro run show --run <run-id>` to see all run details including the final commit:
+
+```bash
+corepack pnpm run maestro run show --run <run-id>
+```
+
+The output will include:
+- Final commit SHA
+- Commit message
+- When the commit was recorded
+- All run artifacts and status
+
+### Run Lifecycle with Final Commit
+
+The complete lifecycle of a run with commit tracking:
+
+1. Prepare run
+2. Supervisor plans
+3. Executor works in sandbox
+4. Validation in workspace
+5. Capture diff
+6. Reviewer reviews
+7. Human decides
+8. Export and check patch
+9. Dry-run apply
+10. Apply to original repo
+11. Validation in original repo
+12. **Manual commit in original repo**
+13. **Record commit in Maestro** ← New step
+14. Finalize run
+15. Memory refresh and checkpoint
+
+This ensures every completed run has a clear link to the actual commit in the project repository.
+
 ## Memory Consolidation / Active Context
 
 Maestro can consolidate the growing Vault into an operational memory layer. This keeps the current state easy to recover without depending on chat history or manually rereading every log.

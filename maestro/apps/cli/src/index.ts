@@ -51,6 +51,7 @@ import {
   appendTaskCompletedToAgentLog,
   appendTaskReviewNeededToNextActions,
   activeContextExists,
+  attachFinalCommit,
   attachRunStage,
   blockRun,
   checkpointProjectMemory,
@@ -441,6 +442,9 @@ async function handleRunCommand(homeDir: string, args: string[]): Promise<void> 
       break;
     case "attach":
       await attachRunOutput(homeDir, rest);
+      break;
+    case "attach-commit":
+      await attachCommitCommand(homeDir, rest);
       break;
     case "workspace":
       await handleRunWorkspaceCommand(homeDir, rest);
@@ -1743,6 +1747,11 @@ async function showRun(homeDir: string, args: string[]): Promise<void> {
   if (run.finalizedAt) {
     console.log(`Finalized: ${run.finalizedAt}`);
   }
+  if (run.finalCommit) {
+    console.log(`Final commit: ${run.finalCommit.sha}`);
+    console.log(`Commit message: ${run.finalCommit.message}`);
+    console.log(`Commit recorded: ${run.finalCommit.recordedAt}`);
+  }
   console.log("Files:");
   for (const file of fileStatuses) {
     const marker = file.exists ? "present" : "missing";
@@ -2826,6 +2835,26 @@ async function finalizeRunCommand(homeDir: string, args: string[]): Promise<void
   }
 }
 
+async function attachCommitCommand(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const runId = getRequiredFlag(flags, "run");
+  const commitSha = getRequiredFlag(flags, "commit");
+  const commitMessage = getRequiredFlag(flags, "message");
+  const state = await loadStateWithFriendlyError(homeDir);
+  const run = findRunOrThrow(state.runs, runId);
+  const project = findProjectForRunOrThrow(state.projects, run);
+  const result = await attachFinalCommit(project, run, commitSha, commitMessage);
+  const nextState = upsertRun(state, result.runRecord);
+
+  await saveState(homeDir, nextState);
+
+  console.log(`Final commit recorded for run: ${run.id}`);
+  console.log(`Commit: ${commitSha}`);
+  console.log(`Message: ${commitMessage}`);
+  console.log(`File: ${result.commitFilePath}`);
+  console.log(`Status: ${result.runRecord.status}`);
+}
+
 async function captureRunDiffCommand(homeDir: string, args: string[]): Promise<void> {
   const { flags } = parseFlags(args);
   const runId = getRequiredFlag(flags, "run");
@@ -3446,6 +3475,7 @@ Usage:
   maestro run patch apply --run <id> --confirm APPLY_TO_ORIGINAL_REPO
   maestro run capture-diff --run <id>
   maestro run finalize --run <id>
+  maestro run attach-commit --run <id> --commit <sha> --message <message>
   maestro run block --run <id> --reason <reason>
   maestro validation detect --project <id>
   maestro validation list --project <id>
@@ -3532,6 +3562,7 @@ function printRunHelp(): void {
   maestro run patch plan --run <id>
   maestro run capture-diff --run <id>
   maestro run finalize --run <id>
+  maestro run attach-commit --run <id> --commit <sha> --message <message>
   maestro run block --run <id> --reason <reason>
 `);
 }
