@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import * as process from "node:process";
@@ -107,7 +107,14 @@ import {
   type CheckPatchResult,
   type InspectPatchResult
 } from "@maestro/runner";
-import { doctorOpenClaudeProvider, discoverOpenClaudeProvider } from "@maestro/providers";
+import {
+  doctorOpenClaudeProvider,
+  discoverOpenClaudeProvider,
+  doctorKiroCliProvider,
+  discoverKiroCliProvider,
+  parseDeviceCodeAuthOutput,
+  isDeviceCodeAuthComplete
+} from "@maestro/providers";
 
 interface ParsedArgs {
   command: string | undefined;
@@ -1460,13 +1467,15 @@ async function providerDoctor(homeDir: string, args: string[]): Promise<void> {
   const { flags } = parseFlags(args);
   const provider = getFlag(flags, "provider") || "openclaude";
 
-  if (provider !== "openclaude") {
-    throw new Error(`Unsupported provider: ${provider}. Only 'openclaude' is supported.`);
+  if (provider !== "openclaude" && provider !== "kiro_cli") {
+    throw new Error(`Unsupported provider: ${provider}. Supported: openclaude, kiro_cli`);
   }
 
   console.log(`Running provider doctor for: ${provider}\n`);
 
-  const result = await doctorOpenClaudeProvider(homeDir);
+  const result = provider === "kiro_cli"
+    ? await doctorKiroCliProvider(homeDir)
+    : await doctorOpenClaudeProvider(homeDir);
 
   console.log(`Provider: ${result.provider}`);
   console.log(`Status: ${result.status}`);
@@ -1495,13 +1504,15 @@ async function providerDiscover(homeDir: string, args: string[]): Promise<void> 
   const { flags } = parseFlags(args);
   const provider = getFlag(flags, "provider") || "openclaude";
 
-  if (provider !== "openclaude") {
-    throw new Error(`Unsupported provider: ${provider}. Only 'openclaude' is supported.`);
+  if (provider !== "openclaude" && provider !== "kiro_cli") {
+    throw new Error(`Unsupported provider: ${provider}. Supported: openclaude, kiro_cli`);
   }
 
   console.log(`Running provider discovery for: ${provider}\n`);
 
-  const result = await discoverOpenClaudeProvider(homeDir);
+  const result = provider === "kiro_cli"
+    ? await discoverKiroCliProvider(homeDir)
+    : await discoverOpenClaudeProvider(homeDir);
 
   console.log(`Provider: ${result.provider}`);
   console.log(`Timestamp: ${result.timestamp}`);
@@ -1540,10 +1551,10 @@ async function providerDiscover(homeDir: string, args: string[]): Promise<void> 
 function printProviderHelp(): void {
   console.log(`Provider commands:
 
-  maestro provider doctor [--provider openclaude]
-  maestro provider discover [--provider openclaude]
-  maestro provider auth status [--provider kiro_openclaude]
-  maestro provider auth start [--provider kiro_openclaude]
+  maestro provider doctor [--provider openclaude|kiro_cli]
+  maestro provider discover [--provider openclaude|kiro_cli]
+  maestro provider auth status [--provider kiro_cli]
+  maestro provider auth start [--provider kiro_cli]
   maestro provider auth poll --session <session-id>
   maestro provider auth cancel --session <session-id>
 `);
@@ -1578,10 +1589,10 @@ async function handleProviderAuthCommand(homeDir: string, args: string[]): Promi
 
 async function providerAuthStatus(homeDir: string, args: string[]): Promise<void> {
   const { flags } = parseFlags(args);
-  const provider = getFlag(flags, "provider") || "kiro_openclaude";
+  const provider = getFlag(flags, "provider") || "kiro_cli";
 
-  if (provider !== "kiro_openclaude" && provider !== "openclaude" && provider !== "anthropic") {
-    throw new Error(`Unsupported provider: ${provider}. Supported: kiro_openclaude, openclaude, anthropic`);
+  if (provider !== "kiro_cli" && provider !== "kiro_openclaude" && provider !== "openclaude" && provider !== "anthropic") {
+    throw new Error(`Unsupported provider: ${provider}. Supported: kiro_cli, kiro_openclaude, openclaude, anthropic`);
   }
 
   const state = await loadStateWithFriendlyError(homeDir);
@@ -1625,20 +1636,27 @@ async function providerAuthStatus(homeDir: string, args: string[]): Promise<void
 
 async function providerAuthStart(homeDir: string, args: string[]): Promise<void> {
   const { flags } = parseFlags(args);
-  const provider = getFlag(flags, "provider") || "kiro_openclaude";
+  const provider = getFlag(flags, "provider") || "kiro_cli";
 
-  if (provider !== "kiro_openclaude" && provider !== "openclaude" && provider !== "anthropic") {
-    throw new Error(`Unsupported provider: ${provider}. Supported: kiro_openclaude, openclaude, anthropic`);
+  if (provider !== "kiro_cli" && provider !== "kiro_openclaude" && provider !== "openclaude" && provider !== "anthropic") {
+    throw new Error(`Unsupported provider: ${provider}. Supported: kiro_cli, kiro_openclaude, openclaude, anthropic`);
   }
 
   console.log(`Starting authorization for provider: ${provider}\n`);
+
+  // Handle kiro_cli with real device flow
+  if (provider === "kiro_cli") {
+    await startKiroCliAuth(homeDir);
+    return;
+  }
+
+  // For other providers, show placeholder
   console.log("⚠️  Authorization flow discovery in progress...\n");
   console.log("This command will:");
   console.log("1. Investigate how to trigger device code authorization");
   console.log("2. Create an auth session");
   console.log("3. Display the device code and URL for browser authorization\n");
 
-  // For now, create a placeholder session indicating we need to discover the auth command
   const state = await loadStateWithFriendlyError(homeDir);
   const { createProviderAuthSession, saveAuthSessionArtifacts } = await import("@maestro/providers");
   
@@ -1651,7 +1669,7 @@ async function providerAuthStart(homeDir: string, args: string[]): Promise<void>
   const updatedSession = {
     ...session,
     status: "FAILED" as const,
-    errorMessage: "Authorization command not yet discovered. Need to investigate OpenClaude auth commands for Kiro provider.",
+    errorMessage: "Authorization command not yet discovered. Need to investigate auth commands for this provider.",
     completedAt: new Date().toISOString()
   };
 
@@ -1662,13 +1680,148 @@ async function providerAuthStart(homeDir: string, args: string[]): Promise<void>
   console.log(`Auth session created: ${session.id}`);
   console.log(`Status: ${updatedSession.status}`);
   console.log(`\n❌ ${updatedSession.errorMessage}\n`);
-  console.log("Next steps:");
-  console.log("1. Investigate OpenClaude auth commands:");
-  console.log("   - openclaude auth login --help");
-  console.log("   - openclaude auth login --sso");
-  console.log("   - Check if --provider kiro is supported");
-  console.log("2. Search for device code patterns in OpenClaude package");
-  console.log("3. Update this command with the correct auth flow\n");
+}
+
+async function startKiroCliAuth(homeDir: string): Promise<void> {
+  const { loadKiroCliConfig } = await import("@maestro/providers");
+  const config = await loadKiroCliConfig(homeDir);
+
+  if (!config) {
+    throw new Error("Kiro CLI config not found. Copy config/kiro-cli.example.json to data/config/kiro-cli.json");
+  }
+
+  if (!config.executablePath) {
+    throw new Error("executablePath not configured in kiro-cli.json");
+  }
+
+  const state = await loadStateWithFriendlyError(homeDir);
+  const { createProviderAuthSession, updateAuthSessionWithDeviceCode, saveAuthSessionArtifacts, markAuthSessionAuthorizedWithInfo, markAuthSessionFailed } = await import("@maestro/providers");
+  
+  const session = createProviderAuthSession(
+    "kiro_cli",
+    "device_code",
+    state.providerAuthSessions.map((s) => s.id)
+  );
+
+  let nextState = upsertProviderAuthSession(state, session);
+  await saveState(homeDir, nextState);
+
+  console.log(`Auth session created: ${session.id}\n`);
+  console.log("Starting Kiro CLI login with device flow...\n");
+
+  // Spawn kiro-cli login --use-device-flow
+  const loginProcess = spawn(config.executablePath, ["login", "--use-device-flow"], {
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  let rawOutput = "";
+  let deviceCodeFound = false;
+  let updatedSession = session;
+
+  // Capture stdout
+  loginProcess.stdout?.on("data", (data: Buffer) => {
+    const text = data.toString();
+    rawOutput += text;
+    process.stdout.write(text); // Echo to console
+
+    // Try to parse device code
+    if (!deviceCodeFound) {
+      const authInfo = parseDeviceCodeAuthOutput(rawOutput);
+      if (isDeviceCodeAuthComplete(authInfo)) {
+        deviceCodeFound = true;
+        updatedSession = updateAuthSessionWithDeviceCode(
+          updatedSession,
+          authInfo.deviceCode,
+          authInfo.userCode!,
+          authInfo.verificationUri!,
+          authInfo.verificationUriComplete,
+          authInfo.expiresIn
+        );
+        
+        // Update state immediately
+        nextState = upsertProviderAuthSession(nextState, updatedSession);
+        saveState(homeDir, nextState).catch(console.error);
+        saveAuthSessionArtifacts(homeDir, session.id, "kiro_cli", updatedSession, rawOutput).catch(console.error);
+
+        console.log("\n✅ Device code captured!");
+        console.log(`\nYour code: ${authInfo.userCode}`);
+        console.log(`Authorization URL: ${authInfo.verificationUriComplete || authInfo.verificationUri}\n`);
+        console.log("After authorizing in your browser, the login will complete automatically.");
+        console.log(`Or check status with: maestro provider auth poll --session ${session.id}\n`);
+      }
+    }
+  });
+
+  // Capture stderr
+  loginProcess.stderr?.on("data", (data: Buffer) => {
+    const text = data.toString();
+    rawOutput += text;
+    process.stderr.write(text); // Echo to console
+  });
+
+  // Wait for process to complete
+  await new Promise<void>((resolve, reject) => {
+    loginProcess.on("close", async (code) => {
+      if (code === 0) {
+        // Login succeeded - check if we're actually authorized
+        try {
+          const { stdout } = await execFileAsync(config.executablePath, ["whoami", "--format", "json"], {
+            timeout: 10000
+          });
+          
+          const whoamiData = JSON.parse(stdout);
+          if (whoamiData.email || whoamiData.user_id) {
+            updatedSession = markAuthSessionAuthorizedWithInfo(
+              updatedSession,
+              whoamiData.email,
+              whoamiData.display_name || whoamiData.name,
+              whoamiData.auth_type || whoamiData.license
+            );
+            
+            nextState = upsertProviderAuthSession(nextState, updatedSession);
+            await saveState(homeDir, nextState);
+            await saveAuthSessionArtifacts(homeDir, session.id, "kiro_cli", updatedSession, rawOutput);
+
+            console.log("\n✅ Authorization successful!");
+            console.log(`Email: ${whoamiData.email || "N/A"}`);
+            console.log(`Session: ${session.id}`);
+            console.log(`Status: AUTHORIZED\n`);
+          } else {
+            throw new Error("whoami returned success but no user info");
+          }
+        } catch (error) {
+          updatedSession = markAuthSessionFailed(updatedSession, `Login completed but whoami failed: ${error instanceof Error ? error.message : String(error)}`);
+          nextState = upsertProviderAuthSession(nextState, updatedSession);
+          await saveState(homeDir, nextState);
+          await saveAuthSessionArtifacts(homeDir, session.id, "kiro_cli", updatedSession, rawOutput);
+          
+          console.log(`\n⚠️  Login process completed but could not verify authorization.`);
+          console.log(`Check status with: maestro provider auth poll --session ${session.id}\n`);
+        }
+        resolve();
+      } else {
+        updatedSession = markAuthSessionFailed(updatedSession, `Login process exited with code ${code}`);
+        nextState = upsertProviderAuthSession(nextState, updatedSession);
+        await saveState(homeDir, nextState);
+        await saveAuthSessionArtifacts(homeDir, session.id, "kiro_cli", updatedSession, rawOutput);
+        
+        console.log(`\n❌ Authorization failed (exit code ${code})`);
+        console.log(`Session: ${session.id}`);
+        console.log(`Status: FAILED\n`);
+        reject(new Error(`Login process exited with code ${code}`));
+      }
+    });
+
+    loginProcess.on("error", async (error) => {
+      updatedSession = markAuthSessionFailed(updatedSession, `Failed to spawn login process: ${error.message}`);
+      nextState = upsertProviderAuthSession(nextState, updatedSession);
+      await saveState(homeDir, nextState);
+      await saveAuthSessionArtifacts(homeDir, session.id, "kiro_cli", updatedSession, rawOutput);
+      
+      console.log(`\n❌ Failed to start login process: ${error.message}\n`);
+      reject(error);
+    });
+  });
 }
 
 async function providerAuthPoll(homeDir: string, args: string[]): Promise<void> {
@@ -1691,8 +1844,63 @@ async function providerAuthPoll(homeDir: string, args: string[]): Promise<void> 
     return;
   }
 
-  console.log("⚠️  Polling not yet implemented.");
+  // Handle kiro_cli polling
+  if (session.provider === "kiro_cli") {
+    await pollKiroCliAuth(homeDir, session);
+    return;
+  }
+
+  console.log("⚠️  Polling not yet implemented for this provider.");
   console.log("This command will check if the user has completed authorization in the browser.\n");
+}
+
+async function pollKiroCliAuth(homeDir: string, session: import("@maestro/core").ProviderAuthSession): Promise<void> {
+  const { loadKiroCliConfig } = await import("@maestro/providers");
+  const config = await loadKiroCliConfig(homeDir);
+
+  if (!config) {
+    throw new Error("Kiro CLI config not found");
+  }
+
+  console.log("Checking Kiro CLI authentication status...\n");
+
+  try {
+    const { stdout } = await execFileAsync(config.executablePath, ["whoami", "--format", "json"], {
+      timeout: 10000
+    });
+    
+    const whoamiData = JSON.parse(stdout);
+    if (whoamiData.email || whoamiData.user_id) {
+      const { markAuthSessionAuthorizedWithInfo, saveAuthSessionArtifacts } = await import("@maestro/providers");
+      const updatedSession = markAuthSessionAuthorizedWithInfo(
+        session,
+        whoamiData.email,
+        whoamiData.display_name || whoamiData.name,
+        whoamiData.auth_type || whoamiData.license
+      );
+      
+      const state = await loadStateWithFriendlyError(homeDir);
+      const nextState = upsertProviderAuthSession(state, updatedSession);
+      await saveState(homeDir, nextState);
+      await saveAuthSessionArtifacts(homeDir, session.id, "kiro_cli", updatedSession);
+
+      console.log("✅ Authorization successful!");
+      console.log(`Email: ${whoamiData.email || "N/A"}`);
+      if (whoamiData.display_name || whoamiData.name) {
+        console.log(`Name: ${whoamiData.display_name || whoamiData.name}`);
+      }
+      console.log(`Status: AUTHORIZED\n`);
+    } else {
+      console.log("⚠️  Still not authorized. Please complete authorization in your browser.\n");
+    }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (errorMsg.includes("not logged in") || errorMsg.includes("not authenticated")) {
+      console.log("⚠️  Still not authorized. Please complete authorization in your browser.\n");
+    } else {
+      console.log(`❌ Error checking authorization: ${errorMsg}\n`);
+    }
+  }
 }
 
 async function providerAuthCancel(homeDir: string, args: string[]): Promise<void> {
@@ -1724,12 +1932,12 @@ async function providerAuthCancel(homeDir: string, args: string[]): Promise<void
 function printProviderAuthHelp(): void {
   console.log(`Provider auth commands:
 
-  maestro provider auth status [--provider kiro_openclaude]
+  maestro provider auth status [--provider kiro_cli]
     Show all auth sessions for a provider
 
   maestro provider auth start --provider <provider>
     Start a new authorization flow (device code)
-    Supported providers: kiro_openclaude, openclaude, anthropic
+    Supported providers: kiro_cli, kiro_openclaude, openclaude, anthropic
 
   maestro provider auth poll --session <session-id>
     Check if authorization has been completed
@@ -4116,9 +4324,9 @@ Usage:
   maestro task update --task <id> [--status <status>] [--priority <priority>]
   maestro task block --task <id> --reason <reason>
   maestro task complete --task <id>
-  maestro provider doctor [--provider openclaude]
-  maestro provider discover [--provider openclaude]
-  maestro provider auth status [--provider kiro_openclaude]
+  maestro provider doctor [--provider openclaude|kiro_cli]
+  maestro provider discover [--provider openclaude|kiro_cli]
+  maestro provider auth status [--provider kiro_cli]
   maestro provider auth start --provider <provider>
   maestro provider auth poll --session <session-id>
   maestro provider auth cancel --session <session-id>

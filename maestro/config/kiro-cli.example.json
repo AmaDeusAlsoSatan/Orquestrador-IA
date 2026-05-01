@@ -1,0 +1,8 @@
+{
+  "executablePath": "C:\\Users\\Defal\\AppData\\Local\\Kiro-Cli\\kiro-cli.EXE",
+  "timeoutMs": 300000,
+  "trustAllTools": false,
+  "defaultAgent": "",
+  "defaultModel": "",
+  "notes": "Copy to data/config/kiro-cli.json and adjust paths. Do not commit the real config."
+}

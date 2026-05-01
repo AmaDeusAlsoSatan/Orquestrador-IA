@@ -17,7 +17,7 @@ export type AgentAdapterType = "CODEX_SUPERVISOR" | "KIRO_EXECUTOR" | "OPENCLAUD
 
 export type AgentAdapterRole = "SUPERVISOR" | "EXECUTOR" | "REVIEWER" | "MEMORY_MANAGER";
 
-export type AgentProvider = "manual" | "openclaude" | "codex_manual" | "kiro_openclaude";
+export type AgentProvider = "manual" | "openclaude" | "codex_manual" | "kiro_openclaude" | "kiro_cli";
 
 export type AgentRunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "BLOCKED";
 

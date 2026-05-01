@@ -18,8 +18,9 @@ data/config/*
 data/vault/projects/*
 !data/vault/projects/.gitkeep
 
-# Provider runtime data (isolated OpenClaude, etc.)
+# Provider runtime data (isolated OpenClaude, Kiro CLI, etc.)
 data/providers/
 
 # Real provider configs (keep examples in config/)
 data/config/openclaude.json
+data/config/kiro-cli.json

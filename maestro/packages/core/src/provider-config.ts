@@ -25,7 +25,7 @@ export type ProviderAuthFlowType =
 
 export interface ProviderAuthSession {
   id: string;
-  provider: "kiro_openclaude" | "openclaude" | "anthropic";
+  provider: "kiro_cli" | "kiro_openclaude" | "openclaude" | "anthropic";
   flowType: ProviderAuthFlowType;
   status: ProviderAuthStatus;
   deviceCode?: string;
@@ -37,6 +37,9 @@ export interface ProviderAuthSession {
   completedAt?: string;
   errorMessage?: string;
   rawOutputPath?: string;
+  email?: string;
+  displayName?: string;
+  authType?: string;
 }
 
 export interface ProviderDoctorResult {
@@ -62,4 +65,13 @@ export interface ProviderDiscoveryResult {
   versionOutput?: string;
   error?: string;
   reportPath?: string;
+}
+
+export interface KiroCliProviderConfig {
+  executablePath: string;
+  timeoutMs: number;
+  trustAllTools: boolean;
+  defaultAgent?: string;
+  defaultModel?: string;
+  notes?: string;
 }

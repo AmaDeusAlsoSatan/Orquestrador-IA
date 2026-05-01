@@ -7,7 +7,7 @@ import { makeUniqueId } from "@maestro/core";
  * Create a new provider auth session
  */
 export function createProviderAuthSession(
-  provider: "kiro_openclaude" | "openclaude" | "anthropic",
+  provider: "kiro_cli" | "kiro_openclaude" | "openclaude" | "anthropic",
   flowType: ProviderAuthFlowType,
   existingIds: readonly string[]
 ): ProviderAuthSession {
@@ -56,6 +56,25 @@ export function markAuthSessionAuthorized(session: ProviderAuthSession): Provide
   return {
     ...session,
     status: "AUTHORIZED",
+    completedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Mark auth session as authorized with user info
+ */
+export function markAuthSessionAuthorizedWithInfo(
+  session: ProviderAuthSession,
+  email: string | undefined,
+  displayName: string | undefined,
+  authType: string | undefined
+): ProviderAuthSession {
+  return {
+    ...session,
+    status: "AUTHORIZED",
+    email,
+    displayName,
+    authType,
     completedAt: new Date().toISOString()
   };
 }
