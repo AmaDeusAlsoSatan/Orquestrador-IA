@@ -2021,7 +2021,8 @@ function runCapturedCommand(
       cwd: options.cwd,
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true
+      windowsHide: true,
+      shell: true // Required for .cmd files on Windows
     });
 
     const timeout = setTimeout(() => {

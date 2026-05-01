@@ -69,7 +69,8 @@ export async function doctorOpenClaudeGrouterProvider(homeDir: string): Promise<
         const args = config.executableArgs ? [...config.executableArgs, "--help"] : ["--help"];
         const { stdout, stderr } = await execFileAsync(config.executablePath, args, {
           timeout: 5000,
-          env: { ...process.env, ...config.env }
+          env: { ...process.env, ...config.env },
+          shell: true // Required for .cmd files on Windows
         });
         checks.push({
           id: "openclaude-response",
@@ -292,7 +293,8 @@ export async function discoverOpenClaudeGrouterProvider(homeDir: string): Promis
       const args = config.executableArgs ? [...config.executableArgs, ...cmd.args] : cmd.args;
       const { stdout, stderr } = await execFileAsync(config.executablePath, args, {
         timeout: 10000,
-        env: { ...process.env, ...config.env }
+        env: { ...process.env, ...config.env },
+        shell: true // Required for .cmd files on Windows
       });
       const output = stdout || stderr;
       await fs.writeFile(path.join(discoveryDir, cmd.file), output, "utf8");

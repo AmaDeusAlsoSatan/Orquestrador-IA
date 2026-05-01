@@ -1,6 +1,6 @@
 {
-  "executablePath": "node",
-  "executableArgs": ["C:\\Users\\YourUser\\AppData\\Roaming\\npm\\node_modules\\@gitlawb\\openclaude\\bin\\openclaude"],
+  "executablePath": "openclaude.cmd",
+  "executableArgs": [],
   "workingDirectory": "C:\\path\\to\\maestro",
   "mode": "print",
   "provider": "openai",
@@ -14,5 +14,5 @@
     "OPENAI_BASE_URL": "http://127.0.0.1:3099/v1",
     "OPENAI_API_KEY": "any-value"
   },
-  "notes": "Copy to data/config/openclaude-grouter.json. Do not commit real config. This adapter uses OpenClaude with Grouter's OpenAI-compatible endpoint. Requires: 1) Grouter daemon running (grouter serve on), 2) Kiro connection linked in Maestro (maestro provider grouter link), 3) OpenClaude installed globally. The apiKey can be any value since Grouter handles auth via linked connection."
+  "notes": "Copy to data/config/openclaude-grouter.json. Do not commit real config. This adapter uses OpenClaude with Grouter's OpenAI-compatible endpoint. Requires: 1) Grouter daemon running (grouter serve on), 2) Kiro connection linked in Maestro (maestro provider grouter link), 3) OpenClaude installed globally. The apiKey can be any value since Grouter handles auth via linked connection. Windows: Use 'openclaude.cmd' or full path 'C:\\Users\\YourUser\\AppData\\Roaming\\npm\\openclaude.cmd'. Linux/Mac: Use 'openclaude' or 'node' with executableArgs."
 }
