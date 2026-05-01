@@ -122,6 +122,7 @@ interface AppState {
   runs: Run[];
   selectedRunId?: string;
   runDetail?: RunDetail;
+  timeline?: any[];
   fileViewer?: { fileName: string; content: string };
   memoryFile?: { fileName: string; content: string };
   actionLogs: ActionLogEntry[];
@@ -505,6 +506,7 @@ function renderSelectedRun(): string {
       ${renderWorkspacePanel(detail)}
       <h3>Checklist</h3>
       <div class="checklist">${detail.checklist.map((item) => `<div class="check"><span class="dot ${item.done ? "done" : ""}">${item.done ? "✓" : ""}</span>${escapeHtml(item.label)}</div>`).join("")}</div>
+      ${renderTimelineSection(detail)}
       ${isFinalized ? "" : `
         <h3>Acoes</h3>
         <div class="button-row">
@@ -664,6 +666,46 @@ function renderWorkspacePanel(detail: RunDetail): string {
       <div class="button-row">
         <button data-command="copy-workspace-path">Copiar caminho do workspace</button>
       </div>
+    </div>
+  `;
+}
+
+function renderTimelineSection(detail: RunDetail): string {
+  return `
+    <div style="margin-top: 1rem;">
+      <h3>Timeline da Run</h3>
+      <div class="button-row">
+        <button data-command="load-timeline">Carregar Timeline</button>
+      </div>
+      ${state.timeline ? renderTimeline(state.timeline) : `<div class="empty">Clique em "Carregar Timeline" para ver os eventos da run.</div>`}
+    </div>
+  `;
+}
+
+function renderTimeline(events: any[]): string {
+  if (events.length === 0) {
+    return `<div class="empty">Nenhum evento registrado ainda.</div>`;
+  }
+
+  return `
+    <div class="checklist" style="margin-top: 0.75rem;">
+      ${events.map((event: any) => {
+        const icon = event.status === "OK" ? "✓" : event.status === "ERROR" ? "✗" : event.status === "WARN" ? "⚠" : "ℹ";
+        const timestamp = event.timestamp ? new Date(event.timestamp).toLocaleString("pt-BR") : "N/A";
+        return `
+          <div class="check">
+            <span class="dot done">${icon}</span>
+            <div>
+              <strong>${escapeHtml(event.title)}</strong>
+              <p class="muted">${escapeHtml(event.description)}</p>
+              <p class="muted" style="font-size: 0.85rem;">
+                ${timestamp}
+                ${event.artifactPath ? ` • ${escapeHtml(event.artifactPath)}` : ""}
+              </p>
+            </div>
+          </div>
+        `;
+      }).join("")}
     </div>
   `;
 }
@@ -889,7 +931,26 @@ async function handleClick(event: Event): Promise<void> {
 
   if (button.dataset.command === "create-pilot-task") {
     await createPilotTask();
+    return;
   }
+
+  if (button.dataset.command === "load-timeline") {
+    await loadTimeline();
+    return;
+  }
+}
+
+async function loadTimeline(): Promise<void> {
+  if (!state.selectedRunId) {
+    showToast("Nenhuma run selecionada.");
+    return;
+  }
+
+  await runBusy(async () => {
+    const response = await api<{ runId: string; events: any[] }>(`/api/runs/${state.selectedRunId}/timeline`);
+    state.timeline = response.events;
+    render();
+  }, "Timeline carregada.");
 }
 
 async function submitCeo(event: SubmitEvent): Promise<void> {

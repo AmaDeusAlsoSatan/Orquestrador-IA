@@ -39,6 +39,7 @@ import {
   createProjectVault,
   createReviewPackage,
   finalizeRun,
+  generateRunTimeline,
   getNextRunStep,
   getProjectContextStatus,
   getProjectMemoryConsolidationStatus,
@@ -247,6 +248,7 @@ async function routeRunRequest(context: RequestContext): Promise<unknown> {
   if (method === "POST" && segments[3] === "action") return runControlledAction(context, runId);
   if (method === "POST" && segments[3] === "attach") return attachRunOutputRoute(context, runId);
   if (method === "POST" && segments[3] === "attach-commit") return attachCommitRoute(context, runId);
+  if (method === "GET" && segments[3] === "timeline") return getRunTimeline(context, runId);
   if (method === "GET" && segments[3] === "files") return getRunFile(context, runId, segments.slice(4).join("/"));
 
   throw new ApiError(404, "Run route not found.");
@@ -516,6 +518,17 @@ async function getRun(context: RequestContext, runId: string) {
     nextStep: nextActions[0]?.description || getNextRunStep(run),
     checklist,
     nextActions
+  };
+}
+
+async function getRunTimeline(context: RequestContext, runId: string) {
+  const { state } = await loadState(context.homeDir);
+  const run = getRunOrThrow(state, runId);
+  const events = await generateRunTimeline(run);
+
+  return {
+    runId: run.id,
+    events
   };
 }
 

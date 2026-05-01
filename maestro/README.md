@@ -1010,6 +1010,91 @@ The complete lifecycle of a run with commit tracking:
 
 This ensures every completed run has a clear link to the actual commit in the project repository.
 
+## Run Timeline
+
+The Run Timeline provides a visual audit trail of all events that occurred during a run's lifecycle. It derives events from run artifacts and presents them in chronological order.
+
+### What is the Timeline?
+
+The timeline automatically detects and displays key events based on the presence of artifact files in the run directory:
+
+- **Run Created**: Initial run preparation
+- **Supervisor Attached**: Codex Supervisor plan generated
+- **Workspace Created**: Sandbox environment created
+- **Handoff Created**: Executor handoff package generated
+- **Executor Attached**: Kiro Executor completed work
+- **Diff Captured**: Code changes captured
+- **Review Package Created**: Review materials prepared
+- **Reviewer Attached**: Codex Reviewer completed analysis
+- **Human Decision**: Human Review Gate decision recorded
+- **Patch Exported**: Changes exported as unified patch
+- **Patch Checked**: Patch verified against original repo
+- **Patch Planned**: Apply plan generated
+- **Patch Dry-Run**: Dry-run apply completed
+- **Patch Applied**: Patch applied to original repo
+- **Validation Workspace**: Workspace validation executed
+- **Validation Original**: Original repo validation executed
+- **Finalized**: Run completed and memory updated
+- **Final Commit Recorded**: Commit registered for audit
+
+### Using the Timeline (CLI)
+
+View the timeline for any run:
+
+```bash
+corepack pnpm run maestro run timeline --run <run-id>
+```
+
+Example output:
+```
+Timeline da Run: 2026-05-01T00-57-10-466Z-task-adicionar-readme-interno-description-criar-
+Goal: Criar README-INTERNAL.md
+Status: FINALIZED
+
+✓ Run criada
+  Run preparada e registrada no sistema
+  Timestamp: 01/05/2026, 00:57:10
+  Artefato: 00-run-metadata.json
+
+✓ Plano do Supervisor anexado
+  Codex Supervisor gerou o plano técnico
+  Timestamp: 01/05/2026, 01:02:15
+  Artefato: 07-supervisor-output.md
+
+...
+
+✓ Commit final registrado
+  Commit do repositório original registrado para auditoria
+  Timestamp: 01/05/2026, 02:30:45
+  Artefato: 26-final-commit.md
+
+Total de eventos: 18
+```
+
+### Using the Timeline (UI)
+
+In the Run Console:
+
+1. Select a run from the list
+2. Click "Carregar Timeline" button
+3. View all events in chronological order with:
+   - Event icon (✓ for success, ✗ for error, ⚠ for warning, ℹ for info)
+   - Event title and description
+   - Timestamp
+   - Associated artifact file
+
+### Timeline Benefits
+
+- **Audit Trail**: Complete history of what happened during the run
+- **Debugging**: Quickly identify when and where issues occurred
+- **Documentation**: Clear record for team review and compliance
+- **Learning**: Understand the full workflow by seeing all steps
+- **No Manual Tracking**: Timeline is automatically derived from artifacts
+
+### Timeline for Completed Runs
+
+For finalized runs, the timeline is especially useful as it provides a complete audit trail without needing to open multiple artifact files. It shows the entire journey from preparation to final commit.
+
 ## Memory Consolidation / Active Context
 
 Maestro can consolidate the growing Vault into an operational memory layer. This keeps the current state easy to recover without depending on chat history or manually rereading every log.

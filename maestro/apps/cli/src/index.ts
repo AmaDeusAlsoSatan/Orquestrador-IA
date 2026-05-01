@@ -60,6 +60,7 @@ import {
   createProjectVault,
   ensureVaultBase,
   finalizeRun,
+  generateRunTimeline,
   captureRunGitDiff,
   createHandoffPackage,
   createReviewPackage,
@@ -439,6 +440,9 @@ async function handleRunCommand(homeDir: string, args: string[]): Promise<void> 
       break;
     case "show":
       await showRun(homeDir, rest);
+      break;
+    case "timeline":
+      await showRunTimeline(homeDir, rest);
       break;
     case "attach":
       await attachRunOutput(homeDir, rest);
@@ -1812,6 +1816,38 @@ async function showRun(homeDir: string, args: string[]): Promise<void> {
   }
   
   console.log(`Next step: ${getRunInspectionNextStep(run, hasExecutorOutput, hasDiff, hasReviewerOutput, humanDecision)}`);
+}
+
+async function showRunTimeline(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const runId = getRequiredFlag(flags, "run");
+  const state = await loadStateWithFriendlyError(homeDir);
+  const run = findRunOrThrow(state.runs, runId);
+  const events = await generateRunTimeline(run);
+
+  console.log(`Timeline da Run: ${run.id}`);
+  console.log(`Goal: ${run.goal}`);
+  console.log(`Status: ${run.status}`);
+  console.log("");
+
+  if (events.length === 0) {
+    console.log("Nenhum evento registrado ainda.");
+    return;
+  }
+
+  for (const event of events) {
+    const icon = event.status === "OK" ? "✓" : event.status === "ERROR" ? "✗" : event.status === "WARN" ? "⚠" : "ℹ";
+    const timestamp = event.timestamp ? new Date(event.timestamp).toLocaleString("pt-BR") : "N/A";
+    console.log(`${icon} ${event.title}`);
+    console.log(`  ${event.description}`);
+    console.log(`  Timestamp: ${timestamp}`);
+    if (event.artifactPath) {
+      console.log(`  Artefato: ${event.artifactPath}`);
+    }
+    console.log("");
+  }
+
+  console.log(`Total de eventos: ${events.length}`);
 }
 
 async function attachRunOutput(homeDir: string, args: string[]): Promise<void> {
@@ -3557,6 +3593,7 @@ function printRunHelp(): void {
   maestro run prepare --project <id> --task <task-id>
   maestro run list --project <id>
   maestro run show --run <id>
+  maestro run timeline --run <id>
   maestro run attach --run <id> --stage <supervisor|executor|reviewer> --file <path>
   maestro run workspace create --run <id> [--force]
   maestro run workspace status --run <id>

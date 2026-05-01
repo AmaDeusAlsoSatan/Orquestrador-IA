@@ -141,6 +141,37 @@ export interface FinalCommit {
   recordedAt: string;
 }
 
+export type RunTimelineEventType =
+  | "RUN_CREATED"
+  | "SUPERVISOR_ATTACHED"
+  | "WORKSPACE_CREATED"
+  | "HANDOFF_CREATED"
+  | "EXECUTOR_ATTACHED"
+  | "DIFF_CAPTURED"
+  | "REVIEW_PACKAGE_CREATED"
+  | "REVIEWER_ATTACHED"
+  | "HUMAN_DECISION"
+  | "PATCH_EXPORTED"
+  | "PATCH_CHECKED"
+  | "PATCH_PLANNED"
+  | "PATCH_DRY_RUN"
+  | "PATCH_APPLIED"
+  | "VALIDATION_WORKSPACE"
+  | "VALIDATION_ORIGINAL"
+  | "FINALIZED"
+  | "FINAL_COMMIT_RECORDED";
+
+export interface RunTimelineEvent {
+  id: string;
+  runId: string;
+  type: RunTimelineEventType;
+  title: string;
+  description: string;
+  status?: "OK" | "WARN" | "ERROR" | "INFO";
+  timestamp?: string;
+  artifactPath?: string;
+}
+
 export interface RunWorkspace {
   id: string;
   runId: string;
