@@ -49,6 +49,16 @@ interface RunFile {
   sizeBytes: number;
 }
 
+interface NextAction {
+  label: string;
+  description: string;
+  actionType: "COPY_PROMPT" | "ATTACH_OUTPUT" | "RUN_ACTION" | "MANUAL";
+  primary?: boolean;
+  fileToOpen?: string;
+  runAction?: string;
+  stage?: "supervisor" | "executor" | "reviewer";
+}
+
 interface RunDetail {
   run: Run;
   project: ProjectSummary;
@@ -56,9 +66,18 @@ interface RunDetail {
   files: RunFile[];
   checklist: ChecklistItem[];
   nextStep: string;
+  nextActions: NextAction[];
   workspace?: { workspacePath: string; status: string };
   promotion?: { status: string; patchPath: string };
   decision?: { status: string; notes: string };
+}
+
+interface ActionLogEntry {
+  action: string;
+  status: "OK" | "ERROR";
+  message: string;
+  details?: string;
+  at: string;
 }
 
 interface Dashboard {
@@ -99,6 +118,7 @@ interface AppState {
   runDetail?: RunDetail;
   fileViewer?: { fileName: string; content: string };
   memoryFile?: { fileName: string; content: string };
+  actionLogs: ActionLogEntry[];
   busy: boolean;
   toast?: string;
 }
@@ -117,6 +137,7 @@ const state: AppState = {
   view: "dashboard",
   tasks: [],
   runs: [],
+  actionLogs: [],
   busy: false
 };
 
@@ -430,16 +451,18 @@ function renderSelectedRun(): string {
   return `
     <div class="card">
       <h3>${escapeHtml(detail.run.id)}</h3>
-      <p class="muted">${escapeHtml(detail.nextStep)}</p>
+      ${renderNextActionPanel(detail)}
       <div class="badge-row">
         <span class="badge">${escapeHtml(detail.run.status)}</span>
         ${detail.workspace ? `<span class="badge ok">workspace ${escapeHtml(detail.workspace.status)}</span>` : `<span class="badge warn">sem workspace</span>`}
         ${detail.promotion ? `<span class="badge">${escapeHtml(detail.promotion.status)}</span>` : `<span class="badge">sem patch</span>`}
       </div>
+      ${renderWorkspacePanel(detail)}
       <h3>Checklist</h3>
       <div class="checklist">${detail.checklist.map((item) => `<div class="check"><span class="dot ${item.done ? "done" : ""}">${item.done ? "✓" : ""}</span>${escapeHtml(item.label)}</div>`).join("")}</div>
       <h3>Acoes</h3>
       <div class="button-row">
+        <button class="primary" data-command="prepare-kiro" ${hasSupervisorOutput(detail) ? "" : "disabled"}>Preparar execucao do Kiro</button>
         ${actionButton("CREATE_WORKSPACE", "Criar workspace")}
         ${actionButton("GENERATE_HANDOFF", "Gerar Kiro Handoff")}
         ${actionButton("CAPTURE_DIFF", "Capturar diff")}
@@ -455,6 +478,11 @@ function renderSelectedRun(): string {
       <h3>Prompts e arquivos</h3>
       <div class="button-row">
         ${fileButton("03-codex-supervisor-prompt.md")}
+        ${fileButton("02-context-pack.md")}
+        ${fileButton("11-git-baseline.md")}
+        ${fileButton("handoff/00-read-this-first.md")}
+        ${fileButton("handoff/01-executor-rules.md")}
+        ${fileButton("handoff/04-task-contract.md")}
         ${fileButton("handoff/07-kiro-prompt.md")}
         ${fileButton("review/08-codex-reviewer-prompt.md")}
         ${fileButton("13-git-diff.md")}
@@ -467,6 +495,77 @@ function renderSelectedRun(): string {
         </div>
       ` : ""}
       ${renderAttachAndDecision(detail)}
+      ${renderActionLogs()}
+    </div>
+  `;
+}
+
+function renderNextActionPanel(detail: RunDetail): string {
+  const primary = detail.nextActions.find((action) => action.primary) || detail.nextActions[0];
+
+  if (!primary) {
+    return `<div class="empty">Nenhum proximo passo detectado.</div>`;
+  }
+
+  return `
+    <div class="card" style="background: var(--panel-soft); box-shadow: none; margin-bottom: 1rem;">
+      <h3>Proximo passo</h3>
+      <p class="item-title">${escapeHtml(primary.label)}</p>
+      <p class="muted">${escapeHtml(primary.description)}</p>
+      ${renderNextActionInstructions(detail, primary)}
+      <div class="button-row" style="margin-top: 0.75rem;">
+        ${detail.nextActions.map(renderNextActionButton).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderNextActionInstructions(detail: RunDetail, action: NextAction): string {
+  if (action.stage === "supervisor" || (!hasSupervisorOutput(detail) && detail.run.status === "PREPARED")) {
+    return `
+      <ol>
+        <li>Copie o prompt do Codex Supervisor.</li>
+        <li>Cole no Codex.</li>
+        <li>Peca para ele gerar o plano tecnico sem modificar arquivos.</li>
+        <li>Cole a resposta abaixo em "Anexar saida do Codex Supervisor".</li>
+      </ol>
+    `;
+  }
+
+  return "";
+}
+
+function renderNextActionButton(action: NextAction): string {
+  if (action.actionType === "COPY_PROMPT" && action.fileToOpen) {
+    return `<button class="${action.primary ? "primary" : ""}" data-run-file="${escapeHtml(action.fileToOpen)}">${escapeHtml(action.label)}</button>`;
+  }
+
+  if (action.actionType === "RUN_ACTION" && action.runAction) {
+    return `<button class="${action.primary ? "primary" : ""}" data-run-action="${escapeHtml(action.runAction)}">${escapeHtml(action.label)}</button>`;
+  }
+
+  if (action.actionType === "ATTACH_OUTPUT" && action.stage) {
+    return `<button data-focus-attach="${escapeHtml(action.stage)}">${escapeHtml(action.label)}</button>`;
+  }
+
+  return `<button disabled>${escapeHtml(action.label)}</button>`;
+}
+
+function renderWorkspacePanel(detail: RunDetail): string {
+  if (!detail.workspace) {
+    return `<div class="empty" style="margin-top: 1rem;">Workspace sandbox ainda nao criado. Crie antes de entregar a tarefa ao Kiro.</div>`;
+  }
+
+  return `
+    <div class="card" style="box-shadow: none; margin-top: 1rem;">
+      <h3>Workspace seguro</h3>
+      <p><strong>Kiro deve trabalhar somente neste workspace:</strong></p>
+      <pre>${escapeHtml(detail.workspace.workspacePath)}</pre>
+      <p><strong>Nao altere o repo original:</strong></p>
+      <pre>${escapeHtml(detail.project.repoPath)}</pre>
+      <div class="button-row">
+        <button data-command="copy-workspace-path">Copiar caminho do workspace</button>
+      </div>
     </div>
   `;
 }
@@ -474,15 +573,11 @@ function renderSelectedRun(): string {
 function renderAttachAndDecision(detail: RunDetail): string {
   return `
     <div class="split" style="margin-top: 1rem;">
-      <form class="card" id="attach-form">
-        <h3>Anexar output</h3>
-        <div class="field">
-          <label>Stage</label>
-          <select name="stage"><option value="supervisor">Codex Supervisor</option><option value="executor">Kiro Executor</option><option value="reviewer">Codex Reviewer</option></select>
-        </div>
-        <div class="field"><label>Conteudo</label><textarea name="content"></textarea></div>
-        <button class="primary" type="submit">Anexar</button>
-      </form>
+      <div class="list">
+        ${renderStageAttachForm("supervisor", "Anexar saida do Codex Supervisor", "Anexar plano do Supervisor")}
+        ${renderStageAttachForm("executor", "Anexar relatorio do Kiro Executor", "Anexar relatorio do Kiro")}
+        ${renderStageAttachForm("reviewer", "Anexar revisao do Codex Reviewer", "Anexar revisao do Codex")}
+      </div>
       <form class="card" id="decision-form">
         <h3>Human Review Gate</h3>
         <div class="field">
@@ -493,6 +588,40 @@ function renderAttachAndDecision(detail: RunDetail): string {
         <label class="check"><input type="checkbox" name="createFollowUpTask" /> Criar follow-up task</label>
         <button class="primary" type="submit">Registrar decisao humana</button>
       </form>
+    </div>
+  `;
+}
+
+function renderStageAttachForm(stage: "supervisor" | "executor" | "reviewer", title: string, buttonLabel: string): string {
+  return `
+    <form class="card attach-form" data-stage="${stage}" id="attach-${stage}">
+      <h3>${escapeHtml(title)}</h3>
+      <div class="field">
+        <label>Conteudo</label>
+        <textarea name="content" placeholder="Cole aqui a resposta manual..."></textarea>
+      </div>
+      <button class="primary" type="submit">${escapeHtml(buttonLabel)}</button>
+    </form>
+  `;
+}
+
+function renderActionLogs(): string {
+  if (state.actionLogs.length === 0) {
+    return "";
+  }
+
+  return `
+    <div class="card" style="box-shadow: none; margin-top: 1rem;">
+      <h3>Logs de acao da UI</h3>
+      <div class="list">
+        ${state.actionLogs.map((entry) => `
+          <details class="item" ${entry.status === "ERROR" ? "open" : ""}>
+            <summary><strong>${escapeHtml(entry.action)}</strong> | ${escapeHtml(entry.status)} | ${escapeHtml(entry.at)}</summary>
+            <p>${escapeHtml(entry.message)}</p>
+            ${entry.details ? `<pre>${escapeHtml(entry.details)}</pre>` : ""}
+          </details>
+        `).join("")}
+      </div>
     </div>
   `;
 }
@@ -553,7 +682,9 @@ function bindForms(): void {
   document.querySelector<HTMLFormElement>("#ceo-form")?.addEventListener("submit", (event) => void submitCeo(event));
   document.querySelector<HTMLFormElement>("#task-form")?.addEventListener("submit", (event) => void submitTask(event));
   document.querySelector<HTMLFormElement>("#project-form")?.addEventListener("submit", (event) => void submitProject(event));
-  document.querySelector<HTMLFormElement>("#attach-form")?.addEventListener("submit", (event) => void submitAttach(event));
+  document.querySelectorAll<HTMLFormElement>(".attach-form").forEach((form) => {
+    form.addEventListener("submit", (event) => void submitAttach(event));
+  });
   document.querySelector<HTMLFormElement>("#decision-form")?.addEventListener("submit", (event) => void submitDecision(event));
 }
 
@@ -592,6 +723,11 @@ async function handleClick(event: Event): Promise<void> {
     return;
   }
 
+  if (button.dataset.focusAttach) {
+    focusAttachForm(button.dataset.focusAttach);
+    return;
+  }
+
   if (button.dataset.runFile) {
     await openRunFile(button.dataset.runFile);
     return;
@@ -616,8 +752,19 @@ async function handleClick(event: Event): Promise<void> {
   }
 
   if (button.dataset.command === "copy-open-file" && state.fileViewer) {
-    await navigator.clipboard.writeText(state.fileViewer.content);
+    await copyText(state.fileViewer.content);
     showToast("Conteudo copiado.");
+    return;
+  }
+
+  if (button.dataset.command === "copy-workspace-path" && state.runDetail?.workspace) {
+    await copyText(state.runDetail.workspace.workspacePath);
+    showToast("Caminho do workspace copiado.");
+    return;
+  }
+
+  if (button.dataset.command === "prepare-kiro") {
+    await prepareKiroExecution();
     return;
   }
 
@@ -673,15 +820,19 @@ async function submitProject(event: SubmitEvent): Promise<void> {
 async function submitAttach(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.selectedRunId) return;
-  const form = new FormData(event.currentTarget as HTMLFormElement);
+  const formElement = event.currentTarget as HTMLFormElement;
+  const form = new FormData(formElement);
+  const stage = formElement.dataset.stage || "supervisor";
   await runBusy(async () => {
-    await api(`/api/runs/${state.selectedRunId}/attach`, {
+    const result = await api(`/api/runs/${state.selectedRunId}/attach`, {
       method: "POST",
       body: {
-        stage: String(form.get("stage") || "supervisor"),
+        stage,
         content: String(form.get("content") || "")
       }
     });
+    pushActionLog(`ATTACH_${stage.toUpperCase()}`, "OK", "Output anexado pela UI.", result);
+    formElement.reset();
     await refreshProjectData();
   }, "Output anexado.");
 }
@@ -741,9 +892,31 @@ async function prepareRunForTask(taskId: string): Promise<void> {
 async function executeRunAction(action: string): Promise<void> {
   if (!state.selectedRunId) return;
   await runBusy(async () => {
-    await api(`/api/runs/${state.selectedRunId}/action`, { method: "POST", body: { action } });
+    const result = await api(`/api/runs/${state.selectedRunId}/action`, { method: "POST", body: { action } });
+    pushActionLog(action, "OK", "Acao executada pela API local.", result);
     await refreshProjectData();
   }, `${action} concluido.`);
+}
+
+async function prepareKiroExecution(): Promise<void> {
+  if (!state.selectedRunId) return;
+
+  await runBusy(async () => {
+    if (!state.runDetail?.workspace) {
+      const workspaceResult = await api(`/api/runs/${state.selectedRunId}/action`, {
+        method: "POST",
+        body: { action: "CREATE_WORKSPACE" }
+      });
+      pushActionLog("CREATE_WORKSPACE", "OK", "Workspace sandbox criado para a run.", workspaceResult);
+    }
+
+    const handoffResult = await api(`/api/runs/${state.selectedRunId}/action`, {
+      method: "POST",
+      body: { action: "GENERATE_HANDOFF" }
+    });
+    pushActionLog("GENERATE_HANDOFF", "OK", "Kiro Handoff gerado.", handoffResult);
+    await refreshProjectData();
+  }, "Execucao do Kiro preparada.");
 }
 
 async function executeMemoryAction(action: string): Promise<void> {
@@ -775,10 +948,66 @@ async function runBusy(work: () => Promise<void>, message?: string): Promise<voi
     await work();
     if (message) showToast(message);
   } catch (error) {
-    showToast(error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    pushActionLog("UI_ACTION", "ERROR", message, error);
+    showToast(message);
   } finally {
     state.busy = false;
     render();
+  }
+}
+
+function pushActionLog(action: string, status: "OK" | "ERROR", message: string, details?: unknown): void {
+  state.actionLogs = [
+    {
+      action,
+      status,
+      message,
+      details: details === undefined ? undefined : stringifyDetails(details),
+      at: new Date().toLocaleTimeString()
+    },
+    ...state.actionLogs
+  ].slice(0, 8);
+}
+
+function stringifyDetails(value: unknown): string {
+  if (value instanceof Error) {
+    return value.stack || value.message;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function hasSupervisorOutput(detail: RunDetail): boolean {
+  return detail.files.some((file) => file.fileName === "07-supervisor-output.md" && file.exists);
+}
+
+function focusAttachForm(stage: string): void {
+  const form = document.querySelector<HTMLFormElement>(`#attach-${stage}`);
+  const textarea = form?.querySelector<HTMLTextAreaElement>("textarea");
+
+  textarea?.focus();
+  textarea?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function copyText(value: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(value);
+    return;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
   }
 }
 

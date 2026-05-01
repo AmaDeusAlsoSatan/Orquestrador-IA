@@ -1123,3 +1123,18 @@ O que continua propositalmente fora:
 - Deploy.
 - Commit automatico.
 - Patch apply pela UI.
+
+### UI workflow for a run
+
+1. Selecione o projeto no Project Switcher.
+2. Abra a aba `Runs` e selecione a run ativa.
+3. Leia o bloco `Proximo passo`.
+4. Copie `03-codex-supervisor-prompt.md` pela UI.
+5. Cole o prompt no Codex e peça apenas o plano técnico, sem modificar arquivos.
+6. Cole a resposta em `Anexar saida do Codex Supervisor`.
+7. Use `Preparar execucao do Kiro` para criar o workspace sandbox e gerar o handoff.
+8. Abra e copie `handoff/07-kiro-prompt.md`.
+9. Entregue o prompt ao Kiro manualmente.
+10. Depois da execução manual, volte para a UI para anexar relatório, capturar diff, gerar review package e registrar a decisão humana.
+
+O Kiro deve trabalhar somente no workspace mostrado pela UI. O repo original não recebe patch pela UI neste MVP.

@@ -84,6 +84,16 @@ interface RunActionBody {
   force?: boolean;
 }
 
+interface NextAction {
+  label: string;
+  description: string;
+  actionType: "COPY_PROMPT" | "ATTACH_OUTPUT" | "RUN_ACTION" | "MANUAL";
+  primary?: boolean;
+  fileToOpen?: string;
+  runAction?: string;
+  stage?: "supervisor" | "executor" | "reviewer";
+}
+
 const DEFAULT_PORT = 4317;
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const TEXT_FILE_ALLOWLIST = new Set([
@@ -108,6 +118,9 @@ const TEXT_FILE_ALLOWLIST = new Set([
   "18-promotion-summary.md",
   "19-promotion-check.md",
   "20-apply-plan.md",
+  "handoff/00-read-this-first.md",
+  "handoff/01-executor-rules.md",
+  "handoff/04-task-contract.md",
   "handoff/07-kiro-prompt.md",
   "review/08-codex-reviewer-prompt.md"
 ]);
@@ -312,6 +325,11 @@ async function getProjectDashboard(context: RequestContext, projectId: string) {
   const latestPromotion = state.promotions.filter((promotion) => promotion.projectId === project.id).sort(byUpdatedAtDesc)[0];
   const latestValidation = state.validationRuns.filter((run) => run.projectId === project.id).sort(byUpdatedAtDesc)[0];
   const runsAwaitingDecision = await getRunsAwaitingDecision(runs, decisions);
+  const openRun = runs.filter((run) => !["FINALIZED", "BLOCKED"].includes(run.status)).sort(byUpdatedAtDesc)[0];
+  const openRunWorkspace = openRun ? state.workspaces.find((workspace) => workspace.runId === openRun.id) : undefined;
+  const openRunPromotion = openRun ? state.promotions.find((promotion) => promotion.runId === openRun.id) : undefined;
+  const openRunDecision = openRun ? state.decisions.find((decision) => decision.runId === openRun.id) : undefined;
+  const openRunNextAction = openRun ? (await buildNextActions(openRun, openRunWorkspace, openRunPromotion, openRunDecision))[0] : undefined;
 
   return {
     project,
@@ -328,7 +346,7 @@ async function getProjectDashboard(context: RequestContext, projectId: string) {
     latestValidation,
     memoryStatus,
     brief,
-    nextStep: brief?.nextStep || getProjectNextStep(project, tasks, runsAwaitingDecision)
+    nextStep: openRunNextAction?.description || brief?.nextStep || getProjectNextStep(project, tasks, runsAwaitingDecision)
   };
 }
 
@@ -459,6 +477,8 @@ async function getRun(context: RequestContext, runId: string) {
   const promotion = state.promotions.find((item) => item.runId === run.id);
   const decision = state.decisions.find((item) => item.runId === run.id);
   const validationRuns = state.validationRuns.filter((item) => item.runId === run.id).sort(byUpdatedAtDesc);
+  const checklist = await buildRunChecklist(run, workspace, promotion, decision, validationRuns);
+  const nextActions = await buildNextActions(run, workspace, promotion, decision);
 
   return {
     run,
@@ -469,8 +489,9 @@ async function getRun(context: RequestContext, runId: string) {
     promotion,
     decision,
     validationRuns,
-    nextStep: getNextRunStep(run),
-    checklist: await buildRunChecklist(run, workspace, promotion, decision, validationRuns)
+    nextStep: nextActions[0]?.description || getNextRunStep(run),
+    checklist,
+    nextActions
   };
 }
 
@@ -902,6 +923,179 @@ async function buildRunChecklist(
     { id: "patchPlan", label: "Patch plan gerado", done: await fileExists(path.join(run.path, "20-apply-plan.md")) },
     { id: "patchApplied", label: "Patch aplicado", done: promotion?.status === "APPLIED" },
     { id: "validationOriginal", label: "Validacao original rodada", done: validationRuns.some((item) => item.target === "ORIGINAL_REPO") }
+  ];
+}
+
+async function buildNextActions(
+  run: RunRecord,
+  workspace: RunWorkspace | undefined,
+  promotion: PatchPromotion | undefined,
+  decision: HumanReviewDecision | undefined
+): Promise<NextAction[]> {
+  const hasSupervisor = await fileExists(path.join(run.path, "07-supervisor-output.md"));
+  const hasHandoff = await fileExists(path.join(run.path, "handoff", "07-kiro-prompt.md"));
+  const hasExecutor = await fileExists(path.join(run.path, "08-executor-output.md"));
+  const hasDiff = await fileExists(path.join(run.path, "13-git-diff.md"));
+  const hasReviewPackage = await fileExists(path.join(run.path, "review", "08-codex-reviewer-prompt.md"));
+  const hasReviewer = await fileExists(path.join(run.path, "09-reviewer-output.md"));
+  const hasPatchPlan = await fileExists(path.join(run.path, "20-apply-plan.md"));
+
+  if (!hasSupervisor) {
+    return [
+      {
+        label: "Copiar prompt do Codex Supervisor",
+        description: "Copie o prompt, cole no Codex e peça um plano tecnico sem modificar arquivos.",
+        actionType: "COPY_PROMPT",
+        primary: true,
+        fileToOpen: "03-codex-supervisor-prompt.md"
+      },
+      {
+        label: "Anexar plano do Supervisor",
+        description: "Depois que o Codex responder, cole a resposta em Anexar saida do Codex Supervisor.",
+        actionType: "ATTACH_OUTPUT",
+        stage: "supervisor"
+      }
+    ];
+  }
+
+  if (!workspace) {
+    return [
+      {
+        label: "Criar workspace sandbox",
+        description: "Crie a copia segura da run. O Kiro trabalhara somente nesse workspace.",
+        actionType: "RUN_ACTION",
+        primary: true,
+        runAction: "CREATE_WORKSPACE"
+      }
+    ];
+  }
+
+  if (!hasHandoff) {
+    return [
+      {
+        label: "Gerar Kiro Handoff",
+        description: "Monte o pacote fechado com plano aprovado, regras, contrato da task e prompt do Kiro.",
+        actionType: "RUN_ACTION",
+        primary: true,
+        runAction: "GENERATE_HANDOFF"
+      }
+    ];
+  }
+
+  if (!hasExecutor) {
+    return [
+      {
+        label: "Copiar prompt do Kiro",
+        description: "Entregue o prompt ao Kiro manualmente. Ele deve trabalhar somente no workspace sandbox.",
+        actionType: "COPY_PROMPT",
+        primary: true,
+        fileToOpen: "handoff/07-kiro-prompt.md"
+      },
+      {
+        label: "Anexar relatorio do Kiro",
+        description: "Depois da execucao manual, cole o relatorio do executor.",
+        actionType: "ATTACH_OUTPUT",
+        stage: "executor"
+      }
+    ];
+  }
+
+  if (!hasDiff) {
+    return [
+      {
+        label: "Capturar diff real",
+        description: "Capture o diff do workspace para o Codex Reviewer revisar evidencia real.",
+        actionType: "RUN_ACTION",
+        primary: true,
+        runAction: "CAPTURE_DIFF"
+      }
+    ];
+  }
+
+  if (!hasReviewPackage) {
+    return [
+      {
+        label: "Gerar Codex Review Package",
+        description: "Monte o pacote de revisao com plano, relatorio do executor e diff real.",
+        actionType: "RUN_ACTION",
+        primary: true,
+        runAction: "GENERATE_REVIEW_PACKAGE"
+      }
+    ];
+  }
+
+  if (!hasReviewer) {
+    return [
+      {
+        label: "Copiar prompt do Codex Reviewer",
+        description: "Cole o prompt no Codex para revisar o diff real e depois anexe o veredito.",
+        actionType: "COPY_PROMPT",
+        primary: true,
+        fileToOpen: "review/08-codex-reviewer-prompt.md"
+      },
+      {
+        label: "Anexar revisao do Codex",
+        description: "Cole o veredito do Codex Reviewer.",
+        actionType: "ATTACH_OUTPUT",
+        stage: "reviewer"
+      }
+    ];
+  }
+
+  if (!decision) {
+    return [
+      {
+        label: "Registrar decisao humana",
+        description: "O Codex recomenda, mas o aceite final e humano.",
+        actionType: "MANUAL",
+        primary: true
+      }
+    ];
+  }
+
+  if (!promotion) {
+    return [
+      {
+        label: "Exportar patch de promocao",
+        description: "Gere o patch a partir do sandbox aprovado. Ele ainda nao sera aplicado no repo original.",
+        actionType: "RUN_ACTION",
+        primary: true,
+        runAction: "PATCH_EXPORT"
+      }
+    ];
+  }
+
+  if (promotion.status !== "CHECK_PASSED" && promotion.status !== "APPLIED") {
+    return [
+      {
+        label: "Checar patch",
+        description: "Valide com git apply --check se o patch aplicaria no repo original limpo.",
+        actionType: "RUN_ACTION",
+        primary: true,
+        runAction: "PATCH_CHECK"
+      }
+    ];
+  }
+
+  if (!hasPatchPlan) {
+    return [
+      {
+        label: "Gerar plano de apply",
+        description: "Crie o documento de promocao futura. A UI ainda nao aplica patch.",
+        actionType: "RUN_ACTION",
+        primary: true,
+        runAction: "PATCH_PLAN"
+      }
+    ];
+  }
+
+  return [
+    {
+      label: "Run pronta para proxima etapa manual",
+      description: "O plano de promocao existe. A aplicacao no repo original exige passo futuro com confirmacao explicita.",
+      actionType: "MANUAL",
+      primary: true
+    }
   ];
 }
 
