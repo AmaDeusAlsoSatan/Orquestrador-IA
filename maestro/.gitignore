@@ -24,3 +24,4 @@ data/providers/
 # Real provider configs (keep examples in config/)
 data/config/openclaude.json
 data/config/kiro-cli.json
+data/config/grouter.json

@@ -1,0 +1,10 @@
+{
+  "executablePath": "grouter",
+  "routerUrl": "http://127.0.0.1:3099",
+  "dashboardUrl": "http://127.0.0.1:3099/dashboard",
+  "provider": "kiro",
+  "model": "",
+  "openClaudeProfile": "maestro-openclaude",
+  "dataHome": "./data/providers/grouter",
+  "notes": "Copy to data/config/grouter.json. Do not reuse Kofuku's grouter/openclaude data. This is the PRIMARY provider path for Maestro."
+}

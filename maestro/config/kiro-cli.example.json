@@ -4,5 +4,8 @@
   "trustAllTools": false,
   "defaultAgent": "",
   "defaultModel": "",
-  "notes": "Copy to data/config/kiro-cli.json and adjust paths. Do not commit the real config."
+  "allowExistingGlobalAuth": false,
+  "expectedEmail": "",
+  "isolationMode": "unknown",
+  "notes": "EXPERIMENTAL: This provider may reuse global Kiro CLI auth. Do not use as primary provider. Copy to data/config/kiro-cli.json and adjust paths. Do not commit the real config."
 }

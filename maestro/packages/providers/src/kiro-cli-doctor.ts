@@ -116,13 +116,36 @@ export async function doctorKiroCliProvider(homeDir: string): Promise<ProviderDo
         try {
           const whoamiData = JSON.parse(stdout);
           if (whoamiData.email || whoamiData.user_id) {
-            checks.push({
-              id: "auth-status",
-              label: "Authentication status",
-              status: "OK",
-              message: "Authenticated",
-              details: `Email: ${whoamiData.email || "N/A"}`
-            });
+            // Check if this is allowed
+            if (!config.allowExistingGlobalAuth) {
+              checks.push({
+                id: "auth-status",
+                label: "Authentication status",
+                status: "ERROR",
+                message: "Existing global Kiro CLI auth detected",
+                details: "This may belong to Kofuku or another project. Set allowExistingGlobalAuth=true in config to override, or use Grouter provider instead."
+              });
+              overallStatus = "BLOCKED";
+            } else if (config.expectedEmail && whoamiData.email !== config.expectedEmail) {
+              const maskedEmail = maskEmail(whoamiData.email);
+              checks.push({
+                id: "auth-status",
+                label: "Authentication status",
+                status: "ERROR",
+                message: "Authenticated with unexpected email",
+                details: `Expected: ${config.expectedEmail}\nFound: ${maskedEmail}\nThis may be a different account.`
+              });
+              overallStatus = "BLOCKED";
+            } else {
+              const maskedEmail = maskEmail(whoamiData.email);
+              checks.push({
+                id: "auth-status",
+                label: "Authentication status",
+                status: "WARN",
+                message: "Authenticated (using global auth)",
+                details: `Email: ${maskedEmail}\nWARNING: Using global Kiro CLI auth. Consider using Grouter provider for isolation.`
+              });
+            }
           } else {
             checks.push({
               id: "auth-status",
@@ -178,9 +201,9 @@ export async function doctorKiroCliProvider(homeDir: string): Promise<ProviderDo
   }
 
   const summary = overallStatus === "READY"
-    ? "Kiro CLI provider is ready"
+    ? "Kiro CLI provider is ready (EXPERIMENTAL: may use global auth)"
     : overallStatus === "BLOCKED"
-    ? "Kiro CLI provider is blocked (configuration or setup issues)"
+    ? "Kiro CLI provider is blocked (global auth detected or configuration issues)"
     : "Kiro CLI provider has errors";
 
   return {
@@ -189,6 +212,17 @@ export async function doctorKiroCliProvider(homeDir: string): Promise<ProviderDo
     checks,
     summary
   };
+}
+
+function maskEmail(email: string): string {
+  if (!email || !email.includes("@")) {
+    return "***";
+  }
+  const [local, domain] = email.split("@");
+  if (local.length <= 2) {
+    return `${local[0]}***@${domain}`;
+  }
+  return `${local[0]}${"*".repeat(local.length - 1)}@${domain}`;
 }
 
 export async function discoverKiroCliProvider(homeDir: string): Promise<ProviderDiscoveryResult> {

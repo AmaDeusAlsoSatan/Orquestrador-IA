@@ -67,11 +67,25 @@ export interface ProviderDiscoveryResult {
   reportPath?: string;
 }
 
+export interface GrouterProviderConfig {
+  executablePath: string;
+  routerUrl: string;
+  dashboardUrl: string;
+  provider: string;
+  model?: string;
+  openClaudeProfile: string;
+  dataHome: string;
+  notes?: string;
+}
+
 export interface KiroCliProviderConfig {
   executablePath: string;
   timeoutMs: number;
   trustAllTools: boolean;
   defaultAgent?: string;
   defaultModel?: string;
+  allowExistingGlobalAuth: boolean;
+  expectedEmail?: string;
+  isolationMode: "unknown" | "global" | "isolated";
   notes?: string;
 }

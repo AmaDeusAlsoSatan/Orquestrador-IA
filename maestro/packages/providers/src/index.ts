@@ -2,6 +2,7 @@ import type { ProviderProfile } from "@maestro/core";
 
 export * from "./openclaude-doctor";
 export * from "./kiro-cli-doctor";
+export * from "./grouter-doctor";
 export * from "./auth-parser";
 export * from "./auth-session";
 
