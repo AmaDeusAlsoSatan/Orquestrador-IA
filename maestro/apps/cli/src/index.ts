@@ -28,6 +28,7 @@ import {
   upsertAgentProfile,
   upsertPatchPromotion,
   upsertProject,
+  upsertProviderAuthSession,
   upsertRun,
   upsertRunWorkspace,
   upsertTask,
@@ -1441,6 +1442,9 @@ async function handleProviderCommand(homeDir: string, args: string[]): Promise<v
     case "discover":
       await providerDiscover(homeDir, rest);
       break;
+    case "auth":
+      await handleProviderAuthCommand(homeDir, rest);
+      break;
     case "help":
     case "--help":
     case "-h":
@@ -1538,6 +1542,200 @@ function printProviderHelp(): void {
 
   maestro provider doctor [--provider openclaude]
   maestro provider discover [--provider openclaude]
+  maestro provider auth status [--provider kiro_openclaude]
+  maestro provider auth start [--provider kiro_openclaude]
+  maestro provider auth poll --session <session-id>
+  maestro provider auth cancel --session <session-id>
+`);
+}
+
+async function handleProviderAuthCommand(homeDir: string, args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+
+  switch (subcommand) {
+    case "status":
+      await providerAuthStatus(homeDir, rest);
+      break;
+    case "start":
+      await providerAuthStart(homeDir, rest);
+      break;
+    case "poll":
+      await providerAuthPoll(homeDir, rest);
+      break;
+    case "cancel":
+      await providerAuthCancel(homeDir, rest);
+      break;
+    case "help":
+    case "--help":
+    case "-h":
+    case undefined:
+      printProviderAuthHelp();
+      break;
+    default:
+      throw new Error(`Unknown provider auth command: ${subcommand}`);
+  }
+}
+
+async function providerAuthStatus(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const provider = getFlag(flags, "provider") || "kiro_openclaude";
+
+  if (provider !== "kiro_openclaude" && provider !== "openclaude" && provider !== "anthropic") {
+    throw new Error(`Unsupported provider: ${provider}. Supported: kiro_openclaude, openclaude, anthropic`);
+  }
+
+  const state = await loadStateWithFriendlyError(homeDir);
+  const sessions = state.providerAuthSessions.filter((s) => s.provider === provider);
+
+  console.log(`Provider: ${provider}`);
+  console.log(`Auth sessions: ${sessions.length}\n`);
+
+  if (sessions.length === 0) {
+    console.log("No auth sessions found.");
+    console.log(`Start authorization with: maestro provider auth start --provider ${provider}`);
+    return;
+  }
+
+  for (const session of sessions) {
+    console.log(`Session: ${session.id}`);
+    console.log(`  Flow type: ${session.flowType}`);
+    console.log(`  Status: ${session.status}`);
+    console.log(`  Started: ${session.startedAt}`);
+    if (session.userCode) {
+      console.log(`  User code: ${session.userCode}`);
+    }
+    if (session.verificationUri) {
+      console.log(`  Verification URI: ${session.verificationUri}`);
+    }
+    if (session.verificationUriComplete) {
+      console.log(`  Complete URI: ${session.verificationUriComplete}`);
+    }
+    if (session.expiresAt) {
+      console.log(`  Expires: ${session.expiresAt}`);
+    }
+    if (session.completedAt) {
+      console.log(`  Completed: ${session.completedAt}`);
+    }
+    if (session.errorMessage) {
+      console.log(`  Error: ${session.errorMessage}`);
+    }
+    console.log("");
+  }
+}
+
+async function providerAuthStart(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const provider = getFlag(flags, "provider") || "kiro_openclaude";
+
+  if (provider !== "kiro_openclaude" && provider !== "openclaude" && provider !== "anthropic") {
+    throw new Error(`Unsupported provider: ${provider}. Supported: kiro_openclaude, openclaude, anthropic`);
+  }
+
+  console.log(`Starting authorization for provider: ${provider}\n`);
+  console.log("⚠️  Authorization flow discovery in progress...\n");
+  console.log("This command will:");
+  console.log("1. Investigate how to trigger device code authorization");
+  console.log("2. Create an auth session");
+  console.log("3. Display the device code and URL for browser authorization\n");
+
+  // For now, create a placeholder session indicating we need to discover the auth command
+  const state = await loadStateWithFriendlyError(homeDir);
+  const { createProviderAuthSession, saveAuthSessionArtifacts } = await import("@maestro/providers");
+  
+  const session = createProviderAuthSession(
+    provider as "kiro_openclaude" | "openclaude" | "anthropic",
+    "device_code",
+    state.providerAuthSessions.map((s) => s.id)
+  );
+
+  const updatedSession = {
+    ...session,
+    status: "FAILED" as const,
+    errorMessage: "Authorization command not yet discovered. Need to investigate OpenClaude auth commands for Kiro provider.",
+    completedAt: new Date().toISOString()
+  };
+
+  const nextState = upsertProviderAuthSession(state, updatedSession);
+  await saveState(homeDir, nextState);
+  await saveAuthSessionArtifacts(homeDir, session.id, provider, updatedSession);
+
+  console.log(`Auth session created: ${session.id}`);
+  console.log(`Status: ${updatedSession.status}`);
+  console.log(`\n❌ ${updatedSession.errorMessage}\n`);
+  console.log("Next steps:");
+  console.log("1. Investigate OpenClaude auth commands:");
+  console.log("   - openclaude auth login --help");
+  console.log("   - openclaude auth login --sso");
+  console.log("   - Check if --provider kiro is supported");
+  console.log("2. Search for device code patterns in OpenClaude package");
+  console.log("3. Update this command with the correct auth flow\n");
+}
+
+async function providerAuthPoll(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const sessionId = getRequiredFlag(flags, "session");
+
+  const state = await loadStateWithFriendlyError(homeDir);
+  const session = state.providerAuthSessions.find((s) => s.id === sessionId);
+
+  if (!session) {
+    throw new Error(`Auth session not found: ${sessionId}`);
+  }
+
+  console.log(`Polling auth session: ${sessionId}`);
+  console.log(`Provider: ${session.provider}`);
+  console.log(`Status: ${session.status}\n`);
+
+  if (session.status !== "AUTHORIZING") {
+    console.log(`Session is not in AUTHORIZING state. Current status: ${session.status}`);
+    return;
+  }
+
+  console.log("⚠️  Polling not yet implemented.");
+  console.log("This command will check if the user has completed authorization in the browser.\n");
+}
+
+async function providerAuthCancel(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const sessionId = getRequiredFlag(flags, "session");
+
+  const state = await loadStateWithFriendlyError(homeDir);
+  const session = state.providerAuthSessions.find((s) => s.id === sessionId);
+
+  if (!session) {
+    throw new Error(`Auth session not found: ${sessionId}`);
+  }
+
+  console.log(`Cancelling auth session: ${sessionId}`);
+  console.log(`Provider: ${session.provider}`);
+  console.log(`Previous status: ${session.status}\n`);
+
+  const { cancelAuthSession, saveAuthSessionArtifacts } = await import("@maestro/providers");
+  const cancelledSession = cancelAuthSession(session);
+
+  const nextState = upsertProviderAuthSession(state, cancelledSession);
+  await saveState(homeDir, nextState);
+  await saveAuthSessionArtifacts(homeDir, sessionId, session.provider, cancelledSession);
+
+  console.log(`Auth session cancelled: ${sessionId}`);
+  console.log(`Status: ${cancelledSession.status}`);
+}
+
+function printProviderAuthHelp(): void {
+  console.log(`Provider auth commands:
+
+  maestro provider auth status [--provider kiro_openclaude]
+    Show all auth sessions for a provider
+
+  maestro provider auth start --provider <provider>
+    Start a new authorization flow (device code)
+    Supported providers: kiro_openclaude, openclaude, anthropic
+
+  maestro provider auth poll --session <session-id>
+    Check if authorization has been completed
+
+  maestro provider auth cancel --session <session-id>
+    Cancel an ongoing authorization session
 `);
 }
 
@@ -3920,6 +4118,10 @@ Usage:
   maestro task complete --task <id>
   maestro provider doctor [--provider openclaude]
   maestro provider discover [--provider openclaude]
+  maestro provider auth status [--provider kiro_openclaude]
+  maestro provider auth start --provider <provider>
+  maestro provider auth poll --session <session-id>
+  maestro provider auth cancel --session <session-id>
   maestro task sync-vault --project <id>
   maestro context import --project <id> --file <path>
   maestro context status --project <id>

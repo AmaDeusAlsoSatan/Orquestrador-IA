@@ -1,6 +1,8 @@
 import type { ProviderProfile } from "@maestro/core";
 
 export * from "./openclaude-doctor";
+export * from "./auth-parser";
+export * from "./auth-session";
 
 export const PROVIDER_INTEGRATION_STATUS = "planned";
 

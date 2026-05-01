@@ -1,11 +1,42 @@
 export interface OpenClaudeProviderConfig {
   executablePath: string;
+  executableArgs?: string[];
   workingDirectory: string;
   profileName: string;
   defaultModel: string;
   timeoutMs: number;
   env: Record<string, string>;
   notes?: string;
+}
+
+export type ProviderAuthStatus =
+  | "NOT_CONFIGURED"
+  | "NOT_AUTHORIZED"
+  | "AUTHORIZING"
+  | "AUTHORIZED"
+  | "FAILED"
+  | "EXPIRED";
+
+export type ProviderAuthFlowType =
+  | "device_code"
+  | "manual_interactive"
+  | "api_key"
+  | "unknown";
+
+export interface ProviderAuthSession {
+  id: string;
+  provider: "kiro_openclaude" | "openclaude" | "anthropic";
+  flowType: ProviderAuthFlowType;
+  status: ProviderAuthStatus;
+  deviceCode?: string;
+  userCode?: string;
+  verificationUri?: string;
+  verificationUriComplete?: string;
+  startedAt: string;
+  expiresAt?: string;
+  completedAt?: string;
+  errorMessage?: string;
+  rawOutputPath?: string;
 }
 
 export interface ProviderDoctorResult {

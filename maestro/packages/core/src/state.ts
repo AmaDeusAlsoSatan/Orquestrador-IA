@@ -32,7 +32,8 @@ export function createEmptyState(now = new Date().toISOString()): MaestroState {
     workspaces: [],
     promotions: [],
     validationProfiles: [],
-    validationRuns: []
+    validationRuns: [],
+    providerAuthSessions: []
   };
 }
 
@@ -77,7 +78,8 @@ export async function loadState(homeDir: string): Promise<MaestroState> {
     workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter(isRunWorkspace) : [],
     promotions: Array.isArray(parsed.promotions) ? parsed.promotions.filter(isPatchPromotion) : [],
     validationProfiles: Array.isArray(parsed.validationProfiles) ? parsed.validationProfiles : [],
-    validationRuns: Array.isArray(parsed.validationRuns) ? parsed.validationRuns : []
+    validationRuns: Array.isArray(parsed.validationRuns) ? parsed.validationRuns : [],
+    providerAuthSessions: Array.isArray(parsed.providerAuthSessions) ? parsed.providerAuthSessions : []
   };
 }
 
@@ -246,6 +248,20 @@ export function upsertValidationRun(state: MaestroState, validationRun: import("
     ...state,
     updatedAt: new Date().toISOString(),
     validationRuns
+  };
+}
+
+export function upsertProviderAuthSession(state: MaestroState, session: import("./provider-config").ProviderAuthSession): MaestroState {
+  const existingIndex = state.providerAuthSessions.findIndex((item) => item.id === session.id);
+  const providerAuthSessions =
+    existingIndex >= 0
+      ? state.providerAuthSessions.map((item) => (item.id === session.id ? session : item))
+      : [...state.providerAuthSessions, session];
+
+  return {
+    ...state,
+    updatedAt: new Date().toISOString(),
+    providerAuthSessions
   };
 }
 

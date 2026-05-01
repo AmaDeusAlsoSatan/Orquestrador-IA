@@ -324,6 +324,7 @@ export interface MaestroState {
   promotions: PatchPromotion[];
   validationProfiles: ProjectValidationProfile[];
   validationRuns: ValidationRun[];
+  providerAuthSessions: import("./provider-config").ProviderAuthSession[];
 }
 
 export interface ProjectInput {

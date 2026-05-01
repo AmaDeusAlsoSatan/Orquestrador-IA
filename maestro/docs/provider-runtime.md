@@ -91,6 +91,196 @@ Discovery runs:
 
 This is a **read-only** operation that does not execute prompts or modify state.
 
+## Kiro Authorization Flow
+
+### Overview
+
+Kiro models require device code authorization before they can be used, similar to AWS SSO or Grouter. This is a security measure to ensure that only authorized users can access Kiro models.
+
+**The authorization flow is separate from configuration.** Even if the provider doctor passes, you still need to authorize before executing prompts.
+
+### Authorization Status
+
+Check the current authorization status:
+
+```bash
+corepack pnpm run maestro provider auth status --provider kiro_openclaude
+```
+
+This shows all auth sessions for the provider, including:
+- Session ID
+- Flow type (device_code, manual_interactive, api_key)
+- Status (NOT_AUTHORIZED, AUTHORIZING, AUTHORIZED, FAILED, EXPIRED)
+- Device code and verification URL (if available)
+- Expiration time
+- Error messages (if failed)
+
+### Starting Authorization
+
+Start a new authorization session:
+
+```bash
+corepack pnpm run maestro provider auth start --provider kiro_openclaude
+```
+
+**Expected flow:**
+
+1. Maestro creates an auth session
+2. Maestro calls OpenClaude to initiate device code flow
+3. OpenClaude returns:
+   - User code (e.g., `LTPF-NRNC`)
+   - Verification URL (e.g., `https://view.awsapps.com/start/#/device?user_code=LTPF-NRNC`)
+   - Expiration time (typically 15 minutes)
+4. Maestro displays the code and URL
+5. User opens the URL in a browser
+6. User enters the code and authorizes
+7. Maestro polls for completion
+
+**Current Status:** The authorization command is implemented but the actual OpenClaude auth command discovery is still in progress. The command will create a session and indicate that the auth flow needs to be discovered.
+
+### Polling for Completion
+
+After authorizing in the browser, check if authorization is complete:
+
+```bash
+corepack pnpm run maestro provider auth poll --session <session-id>
+```
+
+This checks if the user has completed authorization and updates the session status.
+
+**Current Status:** Polling is not yet implemented. Manual verification is required.
+
+### Cancelling Authorization
+
+Cancel an ongoing authorization session:
+
+```bash
+corepack pnpm run maestro provider auth cancel --session <session-id>
+```
+
+This marks the session as failed and prevents further polling.
+
+### Authorization Storage
+
+Auth sessions are stored in:
+
+```
+data/providers/<provider>/auth/<session-id>/
+  00-auth-session.json    # Session metadata
+  01-raw-output.txt       # Raw output from auth command
+```
+
+**These files are NOT committed to git** (excluded via `.gitignore`).
+
+### Device Code Format
+
+Maestro supports multiple device code formats:
+
+**AWS SSO format:**
+```
+YOUR CODE LTPF-NRNC
+https://view.awsapps.com/start/#/device?user_code=LTPF-NRNC
+```
+
+**Standard OAuth format:**
+```
+user_code=LTPF-NRNC
+verification_uri=https://example.com/device
+verification_uri_complete=https://example.com/device?user_code=LTPF-NRNC
+expires_in=900
+```
+
+**JSON format:**
+```json
+{
+  "user_code": "LTPF-NRNC",
+  "verification_uri": "https://example.com/device",
+  "verification_uri_complete": "https://example.com/device?user_code=LTPF-NRNC",
+  "device_code": "...",
+  "expires_in": 900,
+  "interval": 5
+}
+```
+
+### OpenClaude Auth Commands
+
+OpenClaude provides auth commands:
+
+```bash
+openclaude auth login --help
+openclaude auth login --sso
+openclaude auth status
+openclaude auth logout
+```
+
+**Investigation needed:**
+- Does `openclaude auth login --sso` trigger device code flow for Kiro?
+- Is there a `--provider kiro` flag?
+- What is the output format?
+- How do we detect when authorization is complete?
+
+### UI Integration
+
+The Maestro web UI will provide a visual interface for authorization:
+
+**Provider card:**
+```
+Kiro via OpenClaude
+Status: NOT_AUTHORIZED
+[Start Authorization]
+```
+
+**During authorization:**
+```
+Your code: LTPF-NRNC
+Authorization URL: https://view.awsapps.com/start/#/device?user_code=LTPF-NRNC
+[Copy Code] [Open URL] [I've authorized, check status] [Cancel]
+```
+
+**After authorization:**
+```
+Kiro via OpenClaude
+Status: AUTHORIZED
+Authorized at: 2026-05-01T18:30:00Z
+```
+
+### Workflow Integration
+
+**Before authorization:**
+```bash
+maestro agent invoke --run <id> --role FULL_STACK_EXECUTOR
+# Error: Provider kiro_openclaude not authorized
+# Run: maestro provider auth start --provider kiro_openclaude
+```
+
+**After authorization:**
+```bash
+maestro agent invoke --run <id> --role FULL_STACK_EXECUTOR
+# Invocation created: inv-xxx
+# Status: RUNNING
+# Calling Kiro via OpenClaude...
+# Output captured and attached
+# Status: SUCCEEDED
+```
+
+### Security Considerations
+
+1. **Isolated credentials:** Kiro credentials are stored in the isolated `OPENCLAUDE_HOME` directory
+2. **No credential sharing:** Maestro does not reuse the assistant's OpenClaude credentials
+3. **Session expiration:** Auth sessions expire after a period (typically 15 minutes for device code)
+4. **Manual re-authorization:** If credentials expire, user must re-authorize
+5. **No automatic token refresh:** Maestro does not automatically refresh tokens (for now)
+
+### Next Steps
+
+1. ⏳ Investigate OpenClaude auth commands for Kiro
+2. ⏳ Implement device code flow in `provider auth start`
+3. ⏳ Implement polling in `provider auth poll`
+4. ⏳ Add UI for authorization in web app
+5. ⏳ Integrate auth check into agent invocation
+6. ⏳ Test full authorization flow
+7. ⏳ Document Kiro-specific auth requirements
+
 ## Agent Adapters
 
 Maestro agent adapters map to provider configurations:

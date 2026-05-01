@@ -186,7 +186,8 @@ export async function doctorOpenClaudeProvider(homeDir: string): Promise<Provide
     const executableCheck = checks.find((c) => c.id === "executable-exists");
     if (executableCheck?.status === "OK") {
       try {
-        const { stdout, stderr } = await execFileAsync(config.executablePath, ["--version"], {
+        const args = config.executableArgs ? [...config.executableArgs, "--version"] : ["--version"];
+        const { stdout, stderr } = await execFileAsync(config.executablePath, args, {
           timeout: 5000,
           env: { ...process.env, ...config.env }
         });
@@ -261,7 +262,8 @@ export async function discoverOpenClaudeProvider(homeDir: string): Promise<Provi
 
   // Try --help
   try {
-    const { stdout, stderr } = await execFileAsync(config.executablePath, ["--help"], {
+    const helpArgs = config.executableArgs ? [...config.executableArgs, "--help"] : ["--help"];
+    const { stdout, stderr } = await execFileAsync(config.executablePath, helpArgs, {
       timeout: 10000,
       env: { ...process.env, ...config.env },
       cwd: config.workingDirectory || undefined
@@ -274,7 +276,8 @@ export async function discoverOpenClaudeProvider(homeDir: string): Promise<Provi
 
   // Try --version
   try {
-    const { stdout, stderr } = await execFileAsync(config.executablePath, ["--version"], {
+    const versionArgs = config.executableArgs ? [...config.executableArgs, "--version"] : ["--version"];
+    const { stdout, stderr } = await execFileAsync(config.executablePath, versionArgs, {
       timeout: 10000,
       env: { ...process.env, ...config.env },
       cwd: config.workingDirectory || undefined
