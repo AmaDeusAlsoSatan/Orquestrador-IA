@@ -192,6 +192,7 @@ async function refreshProjectData(): Promise<void> {
 
 async function loadRun(runId: string): Promise<void> {
   state.selectedRunId = runId;
+  state.timeline = undefined; // Clear timeline when switching runs
   state.runDetail = await api<RunDetail>(`/api/runs/${runId}`);
 }
 
