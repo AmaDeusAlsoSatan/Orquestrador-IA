@@ -172,7 +172,7 @@ export async function doctorGrouterProvider(homeDir: string): Promise<ProviderDo
         });
       }
 
-      // Check 7: Check for global home usage and existing connections (runs independently)
+      // Check 7: Check for global home usage and connection linking
       try {
         const { stdout: configOutput, stderr: configStderr } = await execFileAsync(config.executablePath, ["config"], {
           timeout: 5000
@@ -197,21 +197,45 @@ export async function doctorGrouterProvider(homeDir: string): Promise<ProviderDo
             const connectionCount = lines.length;
             
             if (connectionCount > 0) {
-              checks.push({
-                id: "isolation-check",
-                label: "Isolation check",
-                status: "ERROR",
-                message: "Grouter is using global storage with existing connections",
-                details: `CRITICAL: Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nThis may belong to Kofuku or another project.\nGrouter does not support isolated storage via environment variables or flags.\nRECOMMENDATION: Use a separate Grouter instance or wrapper for Maestro.`
-              });
-              overallStatus = "BLOCKED";
+              // Case A: allowGlobalStorageReadOnly = false and connections exist
+              if (!config.allowGlobalStorageReadOnly) {
+                checks.push({
+                  id: "isolation-check",
+                  label: "Isolation check",
+                  status: "ERROR",
+                  message: "Global Grouter storage detected; explicit linking required",
+                  details: `Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nGlobal Grouter storage detected. Explicit connection linking required.\nSet allowGlobalStorageReadOnly=true in config and link specific connections.\nRun: maestro provider grouter sync\nThen: maestro provider grouter link --connection <id>`
+                });
+                overallStatus = "BLOCKED";
+              }
+              // Case B: allowGlobalStorageReadOnly = true but no linked connections
+              else if (config.linkedConnectionIds.length === 0) {
+                checks.push({
+                  id: "isolation-check",
+                  label: "Isolation check",
+                  status: "ERROR",
+                  message: "Global Grouter storage allowed read-only, but no linked connection exists",
+                  details: `Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nallowGlobalStorageReadOnly is enabled, but linkedConnectionIds is empty.\nRun: maestro provider grouter sync\nThen: maestro provider grouter link --connection <id>`
+                });
+                overallStatus = "BLOCKED";
+              }
+              // Case C: allowGlobalStorageReadOnly = true and has linked connections
+              else {
+                checks.push({
+                  id: "isolation-check",
+                  label: "Isolation check",
+                  status: "WARN",
+                  message: "Using global Grouter storage in explicit linked read-only mode",
+                  details: `Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nLinked connections: ${config.linkedConnectionIds.length}\nStrict allowlist: ${config.strictConnectionAllowlist ? "enabled" : "disabled"}\nWARNING: Using global Grouter storage. Only linked connections will be used.`
+                });
+              }
             } else {
               checks.push({
                 id: "isolation-check",
                 label: "Isolation check",
                 status: "WARN",
                 message: "Grouter uses global home but no connections found",
-                details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nNo existing connections detected, but future connections will be shared globally.\nConsider using a separate Grouter instance for true isolation."
+                details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nNo existing connections detected. Add connections via Grouter dashboard."
               });
             }
           } catch (listError) {
@@ -220,7 +244,7 @@ export async function doctorGrouterProvider(homeDir: string): Promise<ProviderDo
               label: "Isolation check",
               status: "WARN",
               message: "Grouter uses global home, could not check connections",
-              details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nCould not verify if existing connections exist.\nThis may conflict with other projects."
+              details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nCould not verify if existing connections exist."
             });
           }
         } else {
@@ -251,21 +275,41 @@ export async function doctorGrouterProvider(homeDir: string): Promise<ProviderDo
             const connectionCount = lines.length;
             
             if (connectionCount > 0) {
-              checks.push({
-                id: "isolation-check",
-                label: "Isolation check",
-                status: "ERROR",
-                message: "Grouter is using global storage with existing connections",
-                details: `CRITICAL: Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nThis may belong to Kofuku or another project.\nGrouter does not support isolated storage via environment variables or flags.\nRECOMMENDATION: Use a separate Grouter instance or wrapper for Maestro.`
-              });
-              overallStatus = "BLOCKED";
+              // Same logic as above
+              if (!config.allowGlobalStorageReadOnly) {
+                checks.push({
+                  id: "isolation-check",
+                  label: "Isolation check",
+                  status: "ERROR",
+                  message: "Global Grouter storage detected; explicit linking required",
+                  details: `Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nGlobal Grouter storage detected. Explicit connection linking required.\nSet allowGlobalStorageReadOnly=true in config and link specific connections.\nRun: maestro provider grouter sync\nThen: maestro provider grouter link --connection <id>`
+                });
+                overallStatus = "BLOCKED";
+              } else if (config.linkedConnectionIds.length === 0) {
+                checks.push({
+                  id: "isolation-check",
+                  label: "Isolation check",
+                  status: "ERROR",
+                  message: "Global Grouter storage allowed read-only, but no linked connection exists",
+                  details: `Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nallowGlobalStorageReadOnly is enabled, but linkedConnectionIds is empty.\nRun: maestro provider grouter sync\nThen: maestro provider grouter link --connection <id>`
+                });
+                overallStatus = "BLOCKED";
+              } else {
+                checks.push({
+                  id: "isolation-check",
+                  label: "Isolation check",
+                  status: "WARN",
+                  message: "Using global Grouter storage in explicit linked read-only mode",
+                  details: `Found ${connectionCount} existing connection(s) in ~/.grouter/grouter.db.\nLinked connections: ${config.linkedConnectionIds.length}\nStrict allowlist: ${config.strictConnectionAllowlist ? "enabled" : "disabled"}\nWARNING: Using global Grouter storage. Only linked connections will be used.`
+                });
+              }
             } else {
               checks.push({
                 id: "isolation-check",
                 label: "Isolation check",
                 status: "WARN",
                 message: "Grouter uses global home but no connections found",
-                details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nNo existing connections detected, but future connections will be shared globally.\nConsider using a separate Grouter instance for true isolation."
+                details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nNo existing connections detected. Add connections via Grouter dashboard."
               });
             }
           } catch {
@@ -274,7 +318,7 @@ export async function doctorGrouterProvider(homeDir: string): Promise<ProviderDo
               label: "Isolation check",
               status: "WARN",
               message: "Grouter uses global home, could not check connections",
-              details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nCould not verify if existing connections exist.\nThis may conflict with other projects."
+              details: "WARNING: Grouter uses ~/.grouter/grouter.db (global storage).\nCould not verify if existing connections exist."
             });
           }
         } else {

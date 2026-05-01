@@ -325,6 +325,7 @@ export interface MaestroState {
   validationProfiles: ProjectValidationProfile[];
   validationRuns: ValidationRun[];
   providerAuthSessions: import("./provider-config").ProviderAuthSession[];
+  grouterConnections: import("./provider-config").GrouterConnectionRef[];
 }
 
 export interface ProjectInput {

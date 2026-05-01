@@ -33,7 +33,8 @@ export function createEmptyState(now = new Date().toISOString()): MaestroState {
     promotions: [],
     validationProfiles: [],
     validationRuns: [],
-    providerAuthSessions: []
+    providerAuthSessions: [],
+    grouterConnections: []
   };
 }
 
@@ -79,7 +80,8 @@ export async function loadState(homeDir: string): Promise<MaestroState> {
     promotions: Array.isArray(parsed.promotions) ? parsed.promotions.filter(isPatchPromotion) : [],
     validationProfiles: Array.isArray(parsed.validationProfiles) ? parsed.validationProfiles : [],
     validationRuns: Array.isArray(parsed.validationRuns) ? parsed.validationRuns : [],
-    providerAuthSessions: Array.isArray(parsed.providerAuthSessions) ? parsed.providerAuthSessions : []
+    providerAuthSessions: Array.isArray(parsed.providerAuthSessions) ? parsed.providerAuthSessions : [],
+    grouterConnections: Array.isArray(parsed.grouterConnections) ? parsed.grouterConnections : []
   };
 }
 

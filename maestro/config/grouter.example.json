@@ -6,5 +6,8 @@
   "model": "",
   "openClaudeProfile": "maestro-openclaude",
   "dataHome": "./data/providers/grouter",
-  "notes": "Copy to data/config/grouter.json. Do not reuse Kofuku's grouter/openclaude data. This is the PRIMARY provider path for Maestro."
+  "allowGlobalStorageReadOnly": false,
+  "linkedConnectionIds": [],
+  "strictConnectionAllowlist": true,
+  "notes": "Copy to data/config/grouter.json. Grouter acts as account vault/manager. Maestro links to specific connections via allowlist. Set allowGlobalStorageReadOnly=true and add connection IDs to linkedConnectionIds after running 'maestro provider grouter link'."
 }

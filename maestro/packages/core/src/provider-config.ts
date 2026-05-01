@@ -75,7 +75,21 @@ export interface GrouterProviderConfig {
   model?: string;
   openClaudeProfile: string;
   dataHome: string;
+  allowGlobalStorageReadOnly: boolean;
+  linkedConnectionIds: string[];
+  strictConnectionAllowlist: boolean;
   notes?: string;
+}
+
+export interface GrouterConnectionRef {
+  id: string;
+  provider: string;
+  emailMasked?: string;
+  label?: string;
+  status?: string;
+  modelHints?: string[];
+  linkedAt: string;
+  allowedRoles?: string[];
 }
 
 export interface KiroCliProviderConfig {

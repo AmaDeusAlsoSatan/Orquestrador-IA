@@ -114,6 +114,10 @@ import {
   discoverKiroCliProvider,
   doctorGrouterProvider,
   discoverGrouterProvider,
+  listGrouterConnections,
+  syncGrouterConnections,
+  linkGrouterConnection,
+  unlinkGrouterConnection,
   parseDeviceCodeAuthOutput,
   isDeviceCodeAuthComplete
 } from "@maestro/providers";
@@ -1454,6 +1458,9 @@ async function handleProviderCommand(homeDir: string, args: string[]): Promise<v
     case "auth":
       await handleProviderAuthCommand(homeDir, rest);
       break;
+    case "grouter":
+      await handleProviderGrouterCommand(homeDir, rest);
+      break;
     case "help":
     case "--help":
     case "-h":
@@ -1559,6 +1566,10 @@ function printProviderHelp(): void {
 
   maestro provider doctor [--provider grouter|openclaude|kiro_cli]
   maestro provider discover [--provider grouter|openclaude|kiro_cli]
+  maestro provider grouter list
+  maestro provider grouter sync
+  maestro provider grouter link --connection <id> --provider <provider> [--label <label>]
+  maestro provider grouter unlink --connection <id>
   maestro provider auth status [--provider kiro_cli]
   maestro provider auth start [--provider kiro_cli]
   maestro provider auth poll --session <session-id>
@@ -1936,6 +1947,147 @@ async function providerAuthCancel(homeDir: string, args: string[]): Promise<void
 
   console.log(`Auth session cancelled: ${sessionId}`);
   console.log(`Status: ${cancelledSession.status}`);
+}
+
+async function handleProviderGrouterCommand(homeDir: string, args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+
+  switch (subcommand) {
+    case "list":
+      await providerGrouterList(homeDir, rest);
+      break;
+    case "sync":
+      await providerGrouterSync(homeDir, rest);
+      break;
+    case "link":
+      await providerGrouterLink(homeDir, rest);
+      break;
+    case "unlink":
+      await providerGrouterUnlink(homeDir, rest);
+      break;
+    case "help":
+    case "--help":
+    case "-h":
+    case undefined:
+      printProviderGrouterHelp();
+      break;
+    default:
+      throw new Error(`Unknown provider grouter command: ${subcommand}`);
+  }
+}
+
+async function providerGrouterList(homeDir: string, args: string[]): Promise<void> {
+  console.log("Grouter connections\n");
+
+  try {
+    const connections = await listGrouterConnections(homeDir);
+
+    if (connections.length === 0) {
+      console.log("No connections found.");
+      console.log("Add connections via Grouter dashboard: http://localhost:3099/dashboard");
+      return;
+    }
+
+    for (const conn of connections) {
+      const email = conn.emailMasked || "(no email)";
+      const status = conn.status || "unknown";
+      console.log(`  ${conn.id} | ${conn.provider} | ${email} | ${status}`);
+    }
+
+    console.log(`\nTotal: ${connections.length} connection(s)`);
+    console.log("\nTo link a connection:");
+    console.log("  maestro provider grouter sync");
+    console.log("  maestro provider grouter link --connection <id> --provider kiro --label \"Kiro principal\"");
+  } catch (error) {
+    console.error(`Error listing Grouter connections: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+
+async function providerGrouterSync(homeDir: string, args: string[]): Promise<void> {
+  console.log("Syncing Grouter connections...\n");
+
+  try {
+    const synced = await syncGrouterConnections(homeDir);
+
+    console.log(`Synced ${synced.length} Grouter connection ref(s).`);
+    console.log("No credentials were copied.\n");
+
+    if (synced.length > 0) {
+      console.log("Connections:");
+      for (const conn of synced) {
+        const email = conn.emailMasked || "(no email)";
+        const status = conn.status || "unknown";
+        const label = conn.label ? ` | ${conn.label}` : "";
+        console.log(`  ${conn.id} | ${conn.provider} | ${email} | ${status}${label}`);
+      }
+    }
+
+    console.log("\nTo link a connection:");
+    console.log("  maestro provider grouter link --connection <id> --provider kiro --label \"Kiro principal\"");
+  } catch (error) {
+    console.error(`Error syncing Grouter connections: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+
+async function providerGrouterLink(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const connectionId = getRequiredFlag(flags, "connection");
+  const provider = getRequiredFlag(flags, "provider");
+  const label = getFlag(flags, "label");
+
+  console.log(`Linking Grouter connection: ${connectionId}...\n`);
+
+  try {
+    const linked = await linkGrouterConnection(homeDir, connectionId, provider, label);
+
+    console.log(`Linked Grouter connection: ${linked.id}`);
+    console.log(`  Provider: ${linked.provider}`);
+    console.log(`  Label: ${linked.label || "(none)"}`);
+    console.log(`  Email: ${linked.emailMasked || "(no email)"}`);
+    console.log(`  Linked at: ${linked.linkedAt}`);
+    console.log("\nConnection is now allowed for use by Maestro.");
+    console.log("Run provider doctor to verify:");
+    console.log("  maestro provider doctor --provider grouter");
+  } catch (error) {
+    console.error(`Error linking Grouter connection: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+
+async function providerGrouterUnlink(homeDir: string, args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const connectionId = getRequiredFlag(flags, "connection");
+
+  console.log(`Unlinking Grouter connection: ${connectionId}...\n`);
+
+  try {
+    await unlinkGrouterConnection(homeDir, connectionId);
+
+    console.log(`Unlinked Grouter connection: ${connectionId}`);
+    console.log("Connection is no longer allowed for use by Maestro.");
+    console.log("The connection still exists in Grouter.");
+  } catch (error) {
+    console.error(`Error unlinking Grouter connection: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+
+function printProviderGrouterHelp(): void {
+  console.log(`Provider grouter commands:
+
+  maestro provider grouter list
+  maestro provider grouter sync
+  maestro provider grouter link --connection <id> --provider <provider> [--label <label>]
+  maestro provider grouter unlink --connection <id>
+
+Examples:
+  maestro provider grouter list
+  maestro provider grouter sync
+  maestro provider grouter link --connection 0c010b69 --provider kiro --label "Kiro principal"
+  maestro provider grouter unlink --connection 0c010b69
+`);
 }
 
 function printProviderAuthHelp(): void {
