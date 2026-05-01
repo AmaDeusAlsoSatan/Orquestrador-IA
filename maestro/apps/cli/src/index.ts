@@ -2284,7 +2284,7 @@ async function planPatchCommand(homeDir: string, args: string[]): Promise<void> 
 async function applyPatchCommand(homeDir: string, args: string[]): Promise<void> {
   const { flags } = parseFlags(args);
   const runId = getRequiredFlag(flags, "run");
-  const isDryRun = flags["dry-run"] === "true" || flags["dry-run"] === "";
+  const isDryRun = flags["dry-run"] === "true" || flags["dry-run"] === "" || flags["dry-run"] === true;
   const confirmation = flags["confirm"];
 
   // Validate confirmation for real apply
