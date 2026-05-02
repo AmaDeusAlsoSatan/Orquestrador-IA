@@ -34,7 +34,17 @@ export async function checkPatchApply(
     // Write patch to temporary file
     const patchFile = path.join(workspacePath, ".maestro", "temp-patch.diff");
     await fs.mkdir(path.dirname(patchFile), { recursive: true });
-    await fs.writeFile(patchFile, patchContent, "utf8");
+    
+    // Ensure patch ends with newline (git patches should end with blank line)
+    let content = patchContent;
+    if (!content.endsWith("\n\n")) {
+      if (content.endsWith("\n")) {
+        content = `${content}\n`;
+      } else {
+        content = `${content}\n\n`;
+      }
+    }
+    await fs.writeFile(patchFile, content, "utf8");
     
     // Run git apply --check
     try {
@@ -83,7 +93,17 @@ export async function applyPatchToWorkspace(
     // Write patch to temporary file
     const patchFile = path.join(workspacePath, ".maestro", "temp-patch.diff");
     await fs.mkdir(path.dirname(patchFile), { recursive: true });
-    await fs.writeFile(patchFile, patchContent, "utf8");
+    
+    // Ensure patch ends with newline (git patches should end with blank line)
+    let content = patchContent;
+    if (!content.endsWith("\n\n")) {
+      if (content.endsWith("\n")) {
+        content = `${content}\n`;
+      } else {
+        content = `${content}\n\n`;
+      }
+    }
+    await fs.writeFile(patchFile, content, "utf8");
     
     // Run git apply
     try {
@@ -126,6 +146,14 @@ export async function savePatchArtifact(
   patchContent: string
 ): Promise<void> {
   await fs.mkdir(path.dirname(patchPath), { recursive: true });
-  const content = patchContent.endsWith("\n") ? patchContent : `${patchContent}\n`;
+  // Ensure patch ends with newline (git patches should end with blank line)
+  let content = patchContent;
+  if (!content.endsWith("\n\n")) {
+    if (content.endsWith("\n")) {
+      content = `${content}\n`;
+    } else {
+      content = `${content}\n\n`;
+    }
+  }
   await fs.writeFile(patchPath, content, "utf8");
 }

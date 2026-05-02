@@ -399,14 +399,15 @@ async function processExecutorPatch(
     if (!workspace) {
       // Create workspace if it doesn't exist
       const workspaceId = `${project.id}-${run.id}`;
-      workspacePath = path.join(getMaestroPaths(homeDir).workspacesDir, project.id, run.id);
+      const workspaceBasePath = path.join(getMaestroPaths(homeDir).workspacesDir, project.id, run.id);
       const newWorkspace = await createRunWorkspace({
         projectId: project.id,
         runId: run.id,
         sourceRepoPath: project.repoPath,
-        workspacePath
+        workspacePath: workspaceBasePath
       });
       nextState = upsertRunWorkspace(nextState, newWorkspace);
+      workspacePath = newWorkspace.workspacePath; // Use effective workspace path (handles monorepos)
       console.log(`Workspace created: ${newWorkspace.workspacePath}`);
     } else {
       workspacePath = workspace.workspacePath;
