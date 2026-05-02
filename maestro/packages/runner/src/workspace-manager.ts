@@ -7,25 +7,6 @@ import { getGitDiff, inspectGitRepo, type GitRepoState } from "./git-inspector";
 
 const execFileAsync = promisify(execFile);
 
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const IGNORED_NAMES = new Set([
-  ".git",
-  "node_modules",
-  "dist",
-  "build",
-  "coverage",
-  ".next",
-  ".vite",
-  ".turbo",
-  "out",
-  "target",
-  "vendor",
-  ".env",
-  ".env.local",
-  ".env.production",
-  ".env.development"
-]);
-
 export interface CreateWorkspaceOptions {
   projectId: string;
   runId: string;
@@ -33,40 +14,74 @@ export interface CreateWorkspaceOptions {
   workspacePath: string;
 }
 
-interface IgnoredFile {
-  path: string;
-  reason: string;
-  sizeBytes?: number;
-}
-
 export async function createRunWorkspace(options: CreateWorkspaceOptions): Promise<RunWorkspace> {
   const sourceRepoPath = path.resolve(options.sourceRepoPath);
   const workspacePath = path.resolve(options.workspacePath);
+  
+  // Verify source is a directory
   const sourceStats = await fs.stat(sourceRepoPath).catch(() => undefined);
-
   if (!sourceStats?.isDirectory()) {
     throw new Error(`Source repository path does not exist or is not a directory: ${sourceRepoPath}`);
   }
 
-  await fs.mkdir(workspacePath, { recursive: true });
-  const ignoredFiles: IgnoredFile[] = [];
+  // Find Git repository root
+  let gitRoot: string;
+  try {
+    gitRoot = (await runGit(sourceRepoPath, ["rev-parse", "--show-toplevel"])).trim();
+  } catch {
+    throw new Error(`Source repository is not inside a Git repository: ${sourceRepoPath}`);
+  }
 
-  await copyDirectory(sourceRepoPath, workspacePath, sourceRepoPath, ignoredFiles);
+  // Check if workspace already exists
+  const workspaceExists = await fs.stat(workspacePath).catch(() => undefined);
+  if (workspaceExists) {
+    throw new Error(`Workspace path already exists: ${workspacePath}`);
+  }
 
-  const maestroDir = path.join(workspacePath, ".maestro");
+  // Create workspace parent directory
+  await fs.mkdir(path.dirname(workspacePath), { recursive: true });
+
+  // Clone repository using git clone --local --no-hardlinks from Git root
+  // This is fast and only copies versioned files (no node_modules, dist, data/, etc.)
+  await runGit(path.dirname(workspacePath), [
+    "clone",
+    "--local",
+    "--no-hardlinks",
+    "--single-branch",
+    gitRoot,
+    path.basename(workspacePath)
+  ]);
+
+  // If source is a subdirectory of the Git root, we need to note that
+  // The workspace will contain the full repository, but we'll work in the subdirectory
+  const relativeSourcePath = path.relative(gitRoot, sourceRepoPath);
+  const effectiveWorkspacePath = relativeSourcePath
+    ? path.join(workspacePath, relativeSourcePath)
+    : workspacePath;
+
+  // Configure workspace Git
+  await runGit(workspacePath, ["config", "user.name", "Maestro Sandbox"]);
+  await runGit(workspacePath, ["config", "user.email", "maestro-sandbox@example.local"]);
+  await runGit(workspacePath, ["config", "core.longpaths", "true"]);
+
+  // Get baseline commit
+  const baselineCommit = (await runGit(workspacePath, ["rev-parse", "HEAD"])).trim() || undefined;
+
+  // Create Maestro metadata directory in the effective workspace path
+  const maestroDir = path.join(effectiveWorkspacePath, ".maestro");
   await fs.mkdir(maestroDir, { recursive: true });
-  await fs.writeFile(path.join(maestroDir, "ignored-files.md"), renderIgnoredFiles(ignoredFiles), "utf8");
   await fs.writeFile(path.join(maestroDir, "README-MAESTRO-WORKSPACE.md"), renderWorkspaceReadme(options), "utf8");
 
-  const baselineCommit = await initializeWorkspaceGit(workspacePath);
+  // Exclude metadata from Git
   await excludeWorkspaceMetadataFromGit(workspacePath);
+
   const now = new Date().toISOString();
   const workspace: RunWorkspace = {
     id: `${options.projectId}-${options.runId}`,
     runId: options.runId,
     projectId: options.projectId,
     sourceRepoPath,
-    workspacePath,
+    workspacePath: effectiveWorkspacePath, // Use effective path for subdirectory projects
     status: "CREATED",
     createdAt: now,
     updatedAt: now,
@@ -90,69 +105,6 @@ export async function createRunWorkspacePatch(workspacePath: string, outPath: st
   const diff = await getRunWorkspaceDiff(workspacePath);
   await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true });
   await fs.writeFile(path.resolve(outPath), diff.endsWith("\n") ? diff : `${diff}\n`, "utf8");
-}
-
-async function copyDirectory(
-  sourceDir: string,
-  targetDir: string,
-  sourceRoot: string,
-  ignoredFiles: IgnoredFile[]
-): Promise<void> {
-  await fs.mkdir(targetDir, { recursive: true });
-  const entries = await fs.readdir(sourceDir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const sourcePath = path.join(sourceDir, entry.name);
-    const targetPath = path.join(targetDir, entry.name);
-    const relativePath = normalizeRelativePath(path.relative(sourceRoot, sourcePath));
-
-    if (shouldIgnoreName(entry.name)) {
-      ignoredFiles.push({ path: relativePath, reason: "ignored pattern" });
-      continue;
-    }
-
-    if (entry.isSymbolicLink()) {
-      ignoredFiles.push({ path: relativePath, reason: "symbolic link ignored for sandbox safety" });
-      continue;
-    }
-
-    if (entry.isDirectory()) {
-      await copyDirectory(sourcePath, targetPath, sourceRoot, ignoredFiles);
-      continue;
-    }
-
-    if (!entry.isFile()) {
-      ignoredFiles.push({ path: relativePath, reason: "non-regular file ignored" });
-      continue;
-    }
-
-    if (entry.name.toLowerCase().endsWith(".log")) {
-      ignoredFiles.push({ path: relativePath, reason: "log file ignored" });
-      continue;
-    }
-
-    const stats = await fs.stat(sourcePath);
-    if (stats.size > MAX_FILE_BYTES) {
-      ignoredFiles.push({ path: relativePath, reason: "file exceeds 10 MB limit", sizeBytes: stats.size });
-      continue;
-    }
-
-    await fs.copyFile(sourcePath, targetPath);
-  }
-}
-
-async function initializeWorkspaceGit(workspacePath: string): Promise<string | undefined> {
-  try {
-    await runGit(workspacePath, ["init"]);
-    await runGit(workspacePath, ["config", "user.name", "Maestro Sandbox"]);
-    await runGit(workspacePath, ["config", "user.email", "maestro-sandbox@example.local"]);
-    await runGit(workspacePath, ["config", "core.longpaths", "true"]);
-    await runGit(workspacePath, ["add", "."]);
-    await runGit(workspacePath, ["commit", "-m", "maestro sandbox baseline"]);
-    return (await runGit(workspacePath, ["rev-parse", "HEAD"])).trim() || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 async function excludeWorkspaceMetadataFromGit(workspacePath: string): Promise<void> {
@@ -182,27 +134,6 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
   return result.stdout.replace(/\r?\n$/u, "");
 }
 
-function shouldIgnoreName(name: string): boolean {
-  return IGNORED_NAMES.has(name) || name.toLowerCase().endsWith(".log");
-}
-
-function renderIgnoredFiles(ignoredFiles: IgnoredFile[]): string {
-  const lines = ["# Ignored Files", ""];
-
-  if (ignoredFiles.length === 0) {
-    lines.push("- none", "");
-    return lines.join("\n");
-  }
-
-  for (const file of ignoredFiles) {
-    const size = file.sizeBytes === undefined ? "" : ` | ${file.sizeBytes} bytes`;
-    lines.push(`- ${file.path} | ${file.reason}${size}`);
-  }
-
-  lines.push("");
-  return lines.join("\n");
-}
-
 function renderWorkspaceReadme(options: CreateWorkspaceOptions): string {
   return `# Maestro Run Workspace
 
@@ -219,8 +150,4 @@ This directory is a disposable sandbox copy created by Maestro.
 - Maestro captures the execution diff from this sandbox.
 - Applying changes back to the original repository is a future explicit approval step.
 `;
-}
-
-function normalizeRelativePath(value: string): string {
-  return value.split(path.sep).join("/");
 }

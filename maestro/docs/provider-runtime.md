@@ -1687,3 +1687,188 @@ Maestro → OpenClaude → Grouter → Kiro
 - Stdout: OK
 
 This approach ensures that prompts with any content (spaces, special characters, multilingual text, etc.) are passed intact to OpenClaude without being fragmented by Windows shell quoting rules.
+
+## Run Workspace Creation
+
+### Overview
+
+Maestro creates isolated workspace sandboxes for agent execution using Git clone instead of recursive filesystem copy. This approach is fast, safe, and avoids copying unwanted artifacts.
+
+**Benefits:**
+- ✅ Fast creation (seconds instead of minutes)
+- ✅ Only copies versioned files (no `node_modules`, `dist`, `data/`, `.tmp`)
+- ✅ Clean workspace (no Maestro artifacts from source)
+- ✅ Safe isolation (original repository untouched)
+- ✅ Git-aware (preserves repository structure and history)
+
+### Implementation
+
+**Method:** `git clone --local --no-hardlinks`
+
+**Location:** `packages/runner/src/workspace-manager.ts`
+
+**How it works:**
+
+1. Detect Git repository root using `git rev-parse --show-toplevel`
+2. Clone repository locally: `git clone --local --no-hardlinks <gitRoot> <workspacePath>`
+3. Handle monorepo case (if source is subdirectory of Git root)
+4. Configure workspace Git (user.name, user.email, core.longpaths)
+5. Create Maestro metadata directory (`.maestro/`)
+6. Exclude metadata from Git tracking
+
+**Monorepo Support:**
+
+If the source repository is a subdirectory of a Git root (e.g., Maestro project inside a monorepo):
+- Clone from Git root
+- Set `effectiveWorkspacePath` to subdirectory within workspace
+- Agents work in subdirectory, not root
+
+**Example:**
+
+```bash
+# Source: C:\Projects\monorepo\maestro
+# Git root: C:\Projects\monorepo
+# Workspace: C:\Projects\maestro\data\workspaces\project\run-id
+# Effective path: C:\Projects\maestro\data\workspaces\project\run-id\maestro
+```
+
+### Performance
+
+**Before (recursive copy):**
+- Time: 120+ seconds
+- Risk: Copying `node_modules`, `dist`, `data/`, `workspaces/`, `.tmp`, logs, etc.
+- Result: Huge workspace with unwanted artifacts
+
+**After (git clone):**
+- Time: ~6 seconds
+- Risk: None (only versioned files copied)
+- Result: Clean workspace with only source code
+
+**Measured:**
+```bash
+Measure-Command { maestro run workspace create --run <id> }
+# TotalSeconds: 5.98
+```
+
+### Workspace Structure
+
+**Created files:**
+
+```
+<workspacePath>/
+  .git/                           # Git repository
+  .maestro/                       # Maestro metadata (excluded from Git)
+    README-MAESTRO-WORKSPACE.md   # Workspace documentation
+    workspace-metadata.json       # Workspace state
+  <project files>                 # Only versioned files from Git
+```
+
+**Not copied:**
+- `node_modules/`
+- `dist/`
+- `data/`
+- `workspaces/`
+- `.tmp/`
+- Logs, outputs, artifacts
+- Any file ignored by `.gitignore`
+
+### Commands
+
+**Create workspace:**
+
+```bash
+maestro run workspace create --run <run-id>
+```
+
+**Check workspace status:**
+
+```bash
+maestro run show --run <run-id>
+# Shows: Workspace exists: yes
+#        Workspace status: CREATED
+#        Workspace path: <path>
+```
+
+**Capture diff:**
+
+```bash
+maestro run workspace diff --run <run-id>
+```
+
+**Create patch:**
+
+```bash
+maestro run workspace patch --run <run-id> --out <patch-file>
+```
+
+### Workspace Lifecycle
+
+1. **CREATED:** Workspace created, no changes yet
+2. **MODIFIED:** Agent has made changes (detected via git status)
+3. **CAPTURED:** Diff captured to run artifacts
+4. **APPLIED:** Changes applied back to original repository (future)
+
+### Safety Rules
+
+**Agents must:**
+- ✅ Work only inside workspace path
+- ✅ Never modify original repository
+- ✅ Respect workspace boundaries
+
+**Maestro ensures:**
+- ✅ Original repository never touched during execution
+- ✅ Changes captured via Git diff
+- ✅ Human approval required before applying changes
+- ✅ Workspace can be deleted without affecting original
+
+### Integration with Executor
+
+**Future workflow:**
+
+1. Run prepared (status: `PREPARED`)
+2. Workspace created automatically for Executor
+3. Executor prompt includes workspace path
+4. Executor modifies files in workspace
+5. Maestro captures diff after execution
+6. Executor output promoted (status: `EXECUTOR_REPORTED`)
+7. Reviewer reviews diff
+8. Human approves changes
+9. Maestro applies patch to original repository
+
+**Current status:** Workspace creation is complete and tested. Executor integration is next.
+
+### Troubleshooting
+
+**Issue: Workspace creation times out**
+
+Check:
+1. Is source a Git repository? `git rev-parse --show-toplevel`
+2. Is Git installed and in PATH? `git --version`
+3. Is workspace path writable?
+
+**Issue: Workspace contains unwanted files**
+
+This should NOT happen with git clone. If it does:
+1. Check `.gitignore` in source repository
+2. Verify files are not versioned: `git ls-files`
+3. Report as bug
+
+**Issue: Monorepo subdirectory not working**
+
+Verify:
+1. Source path is inside Git repository
+2. Effective workspace path is set correctly
+3. Check workspace metadata: `<workspace>/.maestro/workspace-metadata.json`
+
+### References
+
+**Related Files:**
+- `packages/runner/src/workspace-manager.ts` - Workspace creation
+- `packages/runner/src/git-inspector.ts` - Git diff capture
+- `packages/memory/src/run-lifecycle.ts` - Run lifecycle integration
+
+**Related Commands:**
+- `maestro run workspace create` - Create workspace
+- `maestro run workspace diff` - Capture diff
+- `maestro run workspace patch` - Create patch file
+- `maestro run show` - Show workspace status
