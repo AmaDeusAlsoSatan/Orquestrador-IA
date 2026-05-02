@@ -156,13 +156,11 @@ ${goal}
 }
 
 function renderCodexSupervisorPrompt(project: Project, goal: string): string {
-  return `# Codex Supervisor Prompt
+  return `# CTO Supervisor Role
 
-You are the technical supervisor for ${project.name}.
+You are operating as the CTO Supervisor role in Maestro for ${project.name}.
 
-Read the context pack and the task. Do not implement code. Produce a technical plan for the executor.
-
-**IMPORTANT:** You are running inside Maestro AgentInvocation. You must return the complete technical plan now. Do not say "Let me read files" or "I will start by reading" - you already have the context. Generate the full plan immediately.
+Your job is to produce a technical plan for the executor. You already have the context below. Do not say you will read files later. Do not discuss your model identity, provider, transport, or runtime. Return the final plan now.
 
 ## Task
 
@@ -176,12 +174,14 @@ ${goal}
 - List files that likely need to be changed.
 - List risks and open questions.
 - Define acceptance criteria.
-- Generate objective instructions for the Kiro executor.
+- Generate objective instructions for the executor.
 - Keep the executor constrained to the approved plan.
+
+**CRITICAL:** You must return the complete technical plan immediately. Do not say "Let me read files" or "I will start by reading" - you already have all the context you need. Generate the full plan now.
 
 ## Required Output Format
 
-Your response MUST include:
+Your response MUST include these sections:
 
 \`\`\`markdown
 ## Plano Técnico
@@ -206,22 +206,24 @@ Your response MUST include:
 - Files to inspect or edit.
 - Risks.
 - Acceptance criteria.
-- Kiro execution instructions.
+- Executor instructions.
 `;
 }
 
 export function renderKiroExecutorPrompt(project: Project, supervisorPlan?: string): string {
-  const plan = supervisorPlan?.trim() || "[COLE AQUI O PLANO APROVADO PELO CODEX SUPERVISOR]";
+  const plan = supervisorPlan?.trim() || "[COLE AQUI O PLANO APROVADO PELO SUPERVISOR]";
 
-  return `# Kiro Executor Prompt
+  return `# Full Stack Executor Role
 
-You are the executor for ${project.name}.
+You are operating as the Full Stack Executor role in Maestro for ${project.name}.
 
-Follow the Codex supervisor plan strictly. Do not make large architectural decisions on your own. If the work requires changing architecture, data contracts, product scope, or project conventions, stop and ask for review.
+Your job is to report the implementation performed or the exact implementation steps requested by the run. Do not discuss your model identity, provider, transport, or runtime. Return the execution result now.
+
+Follow the supervisor plan strictly. Do not make large architectural decisions on your own. If the work requires changing architecture, data contracts, product scope, or project conventions, stop and ask for review.
 
 Before changing many files, explain your execution plan.
 
-## Approved Codex Supervisor Plan
+## Approved Supervisor Plan
 
 ${plan}
 
@@ -232,6 +234,24 @@ ${plan}
 - Preserve existing project conventions.
 - Do not add unrelated refactors.
 - Do not automate accounts, provider rotation, or provider limit bypassing.
+
+## Required Output Format
+
+Your response MUST include:
+
+\`\`\`markdown
+## Implementação
+[Describe what was implemented]
+
+## Arquivos Alterados
+[List files changed]
+
+## Validação
+[Tests or checks performed]
+
+## Resultado
+[Final result and status]
+\`\`\`
 
 ## Final Report
 
@@ -289,16 +309,18 @@ ${gitEvidenceSection}
 
 - Original goal.
 - Context pack.
-- Codex supervisor plan.
-- Kiro executor report.
+- Supervisor plan.
+- Executor report.
 - Diff or changed files.
 
 ${gitEvidenceSection}
 `;
 
-  return `# Codex Reviewer Prompt
+  return `# Code Reviewer Role
 
-You are the technical reviewer for ${project.name}.
+You are operating as the Code Reviewer role in Maestro for ${project.name}.
+
+Your job is to review the provided output/diff against the task. Do not discuss your model identity, provider, transport, or runtime. Return the review now.
 
 Compare the executor result with the original plan.
 
@@ -313,6 +335,21 @@ Compare the executor result with the original plan.
 - If approved, produce a short summary to update the Vault.
 
 ${reviewInputs}
+
+## Required Output Format
+
+Your response MUST include:
+
+\`\`\`markdown
+## Revisão
+[Review summary]
+
+## Veredito
+[One of: APPROVED | NEEDS_CHANGES | REJECTED | BLOCKED]
+
+## Observações
+[Detailed observations and recommendations]
+\`\`\`
 
 ## Required Review Focus
 

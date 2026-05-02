@@ -1118,6 +1118,40 @@ This should NOT happen. Verify:
 5. ⏭️ Integrate into full workflow (CEO → Supervisor → Executor → Reviewer)
 6. ⏭️ Test with production project (e.g., One Piece Tag Force)
 
+### Prompt Identity Boundary
+
+**Important:** OpenClaude is a transport/runtime detail. Agent prompts must NOT identify the model as "OpenClaude".
+
+**Why this matters:**
+
+When using Kiro/Amazon Q through OpenClaude, the model may reject prompts that identify it as "OpenClaude" because:
+- OpenClaude is just the CLI/transport layer
+- The actual model is Kiro/Amazon Q
+- Identity mismatch causes the model to respond: "I'm not the system described in that prompt — I'm Amazon Q..."
+
+**Correct approach:**
+
+Use role-based identity in agent prompts:
+- **CTO Supervisor:** "You are operating as the CTO Supervisor role in Maestro"
+- **Full Stack Executor:** "You are operating as the Full Stack Executor role in Maestro"
+- **Code Reviewer:** "You are operating as the Code Reviewer role in Maestro"
+
+**Add to all agent prompts:**
+```
+Do not discuss your model identity, provider, transport, or runtime.
+```
+
+This avoids provider/model identity conflicts, especially with Kiro/Amazon Q.
+
+**Implementation:**
+
+Agent prompts are generated in `packages/memory/src/run-prepare.ts`:
+- `renderCodexSupervisorPrompt()` - CTO Supervisor role
+- `renderKiroExecutorPrompt()` - Full Stack Executor role
+- `renderCodexReviewerPrompt()` - Code Reviewer role
+
+Each prompt uses role-based identity and explicitly instructs the model not to discuss its identity.
+
 ### References
 
 **Related Documentation:**
@@ -1129,6 +1163,7 @@ This should NOT happen. Verify:
 - `packages/providers/src/openclaude-home.ts` - Isolation module
 - `packages/providers/src/command-runner.ts` - Command execution
 - `packages/agents/src/runtime.ts` - Agent runtime adapter
+- `packages/memory/src/run-prepare.ts` - Prompt generation with role-based identity
 - `apps/cli/src/index.ts` - Provider test implementation
 
 **Commits:**
