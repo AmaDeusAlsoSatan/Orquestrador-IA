@@ -10,7 +10,9 @@ import {
   DEFAULT_AGENT_MODEL_MAP,
   attachAgentInvocationOutput,
   createDefaultAgentProfiles,
+  extractUnifiedDiffFromAgentOutput,
   prepareAgentInvocation,
+  validatePatchSafety,
   type OpenClaudeAdapterConfig
 } from "@maestro/agents";
 import {
@@ -98,7 +100,9 @@ import {
   type RunStage
 } from "@maestro/memory";
 import {
+  applyPatchToWorkspace,
   checkPatchApplies,
+  checkPatchApply,
   createRunWorkspace,
   detectPackageManager,
   detectPackageScripts,
@@ -110,6 +114,7 @@ import {
   inspectPatch,
   inspectRunWorkspace,
   runValidationCommand,
+  savePatchArtifact,
   type CheckPatchResult,
   type InspectPatchResult
 } from "@maestro/runner";
@@ -338,6 +343,127 @@ async function updateAgentCommand(homeDir: string, args: string[]): Promise<void
   console.log(`Model: ${nextProfile.model || "not set"}`);
 }
 
+/**
+ * Process Executor patch: extract, validate, and apply to workspace
+ * 
+ * Returns updated invocation (FAILED if patch processing fails)
+ */
+async function processExecutorPatch(
+  homeDir: string,
+  invocation: AgentInvocation,
+  outputPath: string,
+  project: Project,
+  run: RunRecord,
+  workspace: RunWorkspace | undefined,
+  state: MaestroState
+): Promise<{ invocation: AgentInvocation; state: MaestroState; patchArtifactPath?: string }> {
+  try {
+    // Read agent output
+    const outputContent = await fs.readFile(outputPath, "utf8");
+    
+    // Extract patch from output
+    const patchResult = extractUnifiedDiffFromAgentOutput(outputContent);
+    
+    if (!patchResult.patch) {
+      return {
+        invocation: {
+          ...invocation,
+          status: "FAILED",
+          errorMessage: `Patch extraction failed: ${patchResult.reason || "No unified diff found in output"}`
+        },
+        state
+      };
+    }
+    
+    // Validate patch safety
+    const safetyCheck = validatePatchSafety(patchResult.patch);
+    if (!safetyCheck.safe) {
+      return {
+        invocation: {
+          ...invocation,
+          status: "FAILED",
+          errorMessage: `Patch safety validation failed: ${safetyCheck.reason}`
+        },
+        state
+      };
+    }
+    
+    // Save patch artifact
+    const patchArtifactPath = path.join(path.dirname(outputPath), "03-proposed.patch");
+    await savePatchArtifact(patchArtifactPath, patchResult.patch);
+    
+    // Ensure workspace exists
+    let workspacePath: string;
+    let nextState = state;
+    
+    if (!workspace) {
+      // Create workspace if it doesn't exist
+      const workspaceId = `${project.id}-${run.id}`;
+      workspacePath = path.join(getMaestroPaths(homeDir).workspacesDir, project.id, run.id);
+      const newWorkspace = await createRunWorkspace({
+        projectId: project.id,
+        runId: run.id,
+        sourceRepoPath: project.repoPath,
+        workspacePath
+      });
+      nextState = upsertRunWorkspace(nextState, newWorkspace);
+      console.log(`Workspace created: ${newWorkspace.workspacePath}`);
+    } else {
+      workspacePath = workspace.workspacePath;
+    }
+    
+    // Check if patch can be applied
+    const checkResult = await checkPatchApply(workspacePath, patchResult.patch);
+    if (!checkResult.success) {
+      return {
+        invocation: {
+          ...invocation,
+          status: "FAILED",
+          errorMessage: `Patch apply check failed: ${checkResult.reason}\n${checkResult.stderr || ""}`
+        },
+        state: nextState,
+        patchArtifactPath
+      };
+    }
+    
+    // Apply patch to workspace
+    const applyResult = await applyPatchToWorkspace(workspacePath, patchResult.patch);
+    if (!applyResult.success) {
+      return {
+        invocation: {
+          ...invocation,
+          status: "FAILED",
+          errorMessage: `Patch apply failed: ${applyResult.reason}\n${applyResult.stderr || ""}`
+        },
+        state: nextState,
+        patchArtifactPath
+      };
+    }
+    
+    // Capture workspace diff
+    await captureRunGitDiff(project, run);
+    
+    console.log(`Patch applied successfully to workspace`);
+    console.log(`Patch artifact: ${patchArtifactPath}`);
+    console.log(`Workspace: ${workspacePath}`);
+    
+    return {
+      invocation,
+      state: nextState,
+      patchArtifactPath
+    };
+  } catch (error) {
+    return {
+      invocation: {
+        ...invocation,
+        status: "FAILED",
+        errorMessage: `Patch processing error: ${error instanceof Error ? error.message : String(error)}`
+      },
+      state
+    };
+  }
+}
+
 async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void> {
   const { flags } = parseFlags(args);
   const runId = getRequiredFlag(flags, "run");
@@ -358,9 +484,41 @@ async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void
 
   let nextState = upsertAgentInvocation(state, result.invocation);
   let stageOutputPath: string | undefined;
+  let patchArtifactPath: string | undefined;
 
   // Automatic stage promotion: if invocation succeeded, promote output to run stage
   if (result.invocation.status === "SUCCEEDED") {
+    // For FULL_STACK_EXECUTOR, extract and apply patch before promotion
+    if (result.invocation.role === "FULL_STACK_EXECUTOR") {
+      const patchResult = await processExecutorPatch(
+        homeDir,
+        result.invocation,
+        result.outputPath,
+        project,
+        run,
+        workspace,
+        nextState
+      );
+      
+      nextState = upsertAgentInvocation(patchResult.state, patchResult.invocation);
+      patchArtifactPath = patchResult.patchArtifactPath;
+      
+      if (patchResult.invocation.status === "FAILED") {
+        await saveState(homeDir, nextState);
+        console.log(`Agent invocation prepared: ${result.invocation.id}`);
+        console.log(`Role: ${result.invocation.role}`);
+        console.log(`Provider: ${result.invocation.provider}`);
+        console.log(`Status: FAILED`);
+        console.log(`Prompt: ${result.promptPath}`);
+        console.log(`Output: ${result.outputPath}`);
+        if (patchArtifactPath) {
+          console.log(`Patch artifact: ${patchArtifactPath}`);
+        }
+        console.log(`Error: ${patchResult.invocation.errorMessage}`);
+        return;
+      }
+    }
+    
     const stage = runStageForAgentInvocationStage(result.invocation.stage);
     if (stage) {
       try {
@@ -373,6 +531,9 @@ async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void
         console.log(`Status: ${result.invocation.status}`);
         console.log(`Prompt: ${result.promptPath}`);
         console.log(`Output: ${result.outputPath}`);
+        if (patchArtifactPath) {
+          console.log(`Patch artifact: ${patchArtifactPath}`);
+        }
         console.log(`Run stage promoted: ${stage}`);
         console.log(`Run stage output: ${stageOutputPath}`);
         console.log(`Run status: ${attachResult.runRecord.status}`);
@@ -383,6 +544,9 @@ async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void
         console.log(`Status: ${result.invocation.status}`);
         console.log(`Prompt: ${result.promptPath}`);
         console.log(`Output: ${result.outputPath}`);
+        if (patchArtifactPath) {
+          console.log(`Patch artifact: ${patchArtifactPath}`);
+        }
         console.log(`Warning: Failed to promote to run stage: ${error instanceof Error ? error.message : String(error)}`);
       }
     } else {
@@ -392,6 +556,9 @@ async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void
       console.log(`Status: ${result.invocation.status}`);
       console.log(`Prompt: ${result.promptPath}`);
       console.log(`Output: ${result.outputPath}`);
+      if (patchArtifactPath) {
+        console.log(`Patch artifact: ${patchArtifactPath}`);
+      }
       console.log(`Run stage promotion: not applicable for this role`);
     }
   } else {
