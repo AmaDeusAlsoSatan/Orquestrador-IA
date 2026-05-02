@@ -1823,19 +1823,17 @@ maestro run workspace patch --run <run-id> --out <patch-file>
 
 ### Integration with Executor
 
-**Future workflow:**
+**Workflow:**
 
 1. Run prepared (status: `PREPARED`)
-2. Workspace created automatically for Executor
-3. Executor prompt includes workspace path
-4. Executor modifies files in workspace
+2. Workspace created automatically for Executor (if needed)
+3. Executor generates unified diff patch
+4. Maestro validates and applies patch to workspace
 5. Maestro captures diff after execution
 6. Executor output promoted (status: `EXECUTOR_REPORTED`)
 7. Reviewer reviews diff
 8. Human approves changes
-9. Maestro applies patch to original repository
-
-**Current status:** Workspace creation is complete and tested. Executor integration is next.
+9. Maestro applies patch to original repository (future)
 
 ### Troubleshooting
 
@@ -1872,3 +1870,275 @@ Verify:
 - `maestro run workspace diff` - Capture diff
 - `maestro run workspace patch` - Create patch file
 - `maestro run show` - Show workspace status
+
+## Patch-Based Executor Mode
+
+### Overview
+
+The Full Stack Executor does not write files directly. Instead, it generates a unified diff patch that Maestro validates and applies inside the workspace sandbox. The original repository remains untouched until review, human approval, and patch promotion.
+
+**Architecture:**
+
+```
+Supervisor Plan
+  ↓
+Executor generates unified diff
+  ↓
+Maestro extracts patch from output
+  ↓
+Maestro validates patch safety
+  ↓
+Maestro checks patch can be applied (git apply --check)
+  ↓
+Maestro applies patch to workspace sandbox
+  ↓
+Maestro captures real diff
+  ↓
+Executor output promoted to run stage
+  ↓
+Reviewer reviews diff
+  ↓
+Human approval
+  ↓
+Patch applied to original repository (future)
+```
+
+**Benefits:**
+- ✅ **Security:** AI doesn't edit files directly
+- ✅ **Control:** Maestro validates before applying
+- ✅ **Auditability:** Explicit diff before application
+- ✅ **Compatibility:** Works regardless of AI tools available
+- ✅ **Safety:** Original repository never touched during execution
+
+### Executor Prompt
+
+The Executor prompt (`packages/memory/src/run-prepare.ts`) instructs the agent to:
+
+1. Generate a unified diff patch (not direct file edits)
+2. Use standard `git diff` format
+3. Include proper context lines
+4. Use relative paths from repository root
+5. Return output in specific format with `## Patch` section
+
+**Required Output Format:**
+
+```markdown
+## Implementação
+[Description of what the patch changes]
+
+## Arquivos Alterados
+[List of files modified by the patch]
+
+## Patch
+\`\`\`diff
+diff --git a/path/to/file b/path/to/file
+index abc123..def456 100644
+--- a/path/to/file
++++ b/path/to/file
+@@ -1,3 +1,4 @@
+ existing line
++new line
+ existing line
+\`\`\`
+
+## Validação
+[What should be checked after applying]
+
+## Resultado
+PATCH_PROPOSED
+```
+
+### Output Contract Validation
+
+The Executor output contract (`packages/agents/src/output-contracts.ts`) validates:
+
+1. ✓ Presence of `## Implementação` section
+2. ✓ Presence of `## Patch` section
+3. ✓ Presence of unified diff markers (`diff --git` or `---`/`+++`/`@@`)
+4. ✓ Presence of result section
+
+If validation fails, the invocation is marked as `FAILED` with a clear error message.
+
+### Patch Extraction
+
+The patch extractor (`packages/agents/src/patch-extractor.ts`) extracts unified diffs from agent output:
+
+**Extraction Methods:**
+
+1. **Fenced code blocks:** ` ```diff ... ``` ` or ` ```patch ... ``` `
+2. **Unfenced diff:** Content starting with `diff --git`
+3. **Unified diff markers:** Lines with `---`, `+++`, `@@`
+
+**Safety Validation:**
+
+- ✗ No absolute paths (security risk)
+- ✗ No command substitution (`$(...)`, backticks)
+- ✗ No `eval()` or `exec()` calls
+- ✓ Must be valid unified diff format
+
+### Patch Application
+
+The patch applier (`packages/runner/src/patch-applier.ts`) applies patches to workspaces:
+
+**Process:**
+
+1. **Check:** `git apply --check <patch>` - validates patch can be applied cleanly
+2. **Apply:** `git apply <patch>` - applies patch to workspace
+3. **Capture:** Maestro captures real diff from workspace
+
+**Failure Handling:**
+
+If patch check or apply fails:
+- Invocation marked as `FAILED`
+- Error message includes `git apply` stderr
+- Patch artifact saved for debugging
+- Original repository untouched
+
+### Workflow Integration
+
+**CLI Integration** (`apps/cli/src/index.ts`):
+
+When `maestro agent invoke --role FULL_STACK_EXECUTOR` succeeds:
+
+1. Extract patch from agent output
+2. Validate patch safety
+3. Save patch artifact (`03-proposed.patch`)
+4. Ensure workspace exists (create if needed)
+5. Check patch can be applied (`git apply --check`)
+6. Apply patch to workspace (`git apply`)
+7. Capture workspace diff
+8. Promote to run stage if all steps succeed
+
+If any step fails, invocation is marked as `FAILED` with detailed error message.
+
+### Example Usage
+
+**Prepare run:**
+
+```bash
+maestro run prepare --project my-project --task my-task-001
+```
+
+**Invoke Supervisor:**
+
+```bash
+maestro agent invoke --run <run-id> --role CTO_SUPERVISOR
+# Supervisor generates plan
+# Run status: SUPERVISOR_PLANNED
+```
+
+**Invoke Executor:**
+
+```bash
+maestro agent invoke --run <run-id> --role FULL_STACK_EXECUTOR
+# Executor generates unified diff patch
+# Maestro extracts and validates patch
+# Maestro applies patch to workspace sandbox
+# Workspace diff captured
+# Run status: EXECUTOR_REPORTED
+```
+
+**Review workspace diff:**
+
+```bash
+maestro run workspace diff --run <run-id>
+# Shows actual changes in workspace
+```
+
+**Invoke Reviewer:**
+
+```bash
+maestro agent invoke --run <run-id> --role CODE_REVIEWER
+# Reviewer analyzes diff and provides verdict
+# Run status: REVIEWED
+```
+
+### Artifacts
+
+**Patch artifacts saved:**
+
+```
+data/runs/<project>/<run-id>/agents/<invocation-id>/
+  01-input-prompt.md      # Prompt sent to agent
+  02-output.md            # Agent output with patch
+  03-proposed.patch       # Extracted unified diff patch
+```
+
+**Run artifacts updated:**
+
+```
+data/runs/<project>/<run-id>/
+  08-executor-output.md   # Promoted executor output
+  12-git-after-executor.md # Git status after execution
+  13-git-diff.md          # Real diff from workspace
+  14-changed-files.md     # List of changed files
+```
+
+### Security
+
+**Patch Safety Checks:**
+
+- ✓ No absolute paths
+- ✓ No command injection patterns
+- ✓ Valid unified diff format
+- ✓ Applied in isolated workspace sandbox
+- ✓ Original repository never touched
+
+**Workspace Isolation:**
+
+- ✓ Workspace created via `git clone --local`
+- ✓ Only versioned files copied
+- ✓ Changes captured via Git diff
+- ✓ Human approval required before applying to original
+
+### Troubleshooting
+
+**Issue: Patch extraction failed**
+
+Check agent output (`02-output.md`):
+- Does it contain `## Patch` section?
+- Does it contain `diff --git` or unified diff markers?
+- Is the diff inside a fenced code block?
+
+**Issue: Patch safety validation failed**
+
+Check patch artifact (`03-proposed.patch`):
+- Does it contain absolute paths?
+- Does it contain suspicious commands?
+- Is it a valid unified diff?
+
+**Issue: Patch apply check failed**
+
+Check error message:
+- Does the patch conflict with workspace state?
+- Are the file paths correct (relative to repository root)?
+- Does the patch have correct context lines?
+
+**Issue: Patch apply failed**
+
+This should not happen if check passed. If it does:
+- Check workspace state: `git -C <workspace> status`
+- Check patch format: `cat <patch-artifact>`
+- Report as bug
+
+### Future Enhancements
+
+- **Patch preview:** Show patch diff before applying
+- **Interactive patch application:** Allow selective hunk application
+- **Patch validation rules:** Custom rules for project-specific constraints
+- **Patch promotion:** Automatic application to original repository after approval
+- **Patch history:** Track all patches generated for a run
+
+### References
+
+**Related Files:**
+- `packages/memory/src/run-prepare.ts` - Executor prompt generation
+- `packages/agents/src/output-contracts.ts` - Output validation
+- `packages/agents/src/patch-extractor.ts` - Patch extraction and safety
+- `packages/runner/src/patch-applier.ts` - Patch application
+- `apps/cli/src/index.ts` - CLI integration
+
+**Related Commands:**
+- `maestro agent invoke --role FULL_STACK_EXECUTOR` - Invoke executor
+- `maestro run workspace diff` - View workspace changes
+- `maestro run show` - View run status and artifacts
