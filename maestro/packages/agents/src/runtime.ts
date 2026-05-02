@@ -6,7 +6,7 @@ import type {
   AgentRole,
   AgentRunStatus
 } from "@maestro/core";
-import { runCapturedCommand } from "@maestro/providers";
+import { runCapturedCommand, ensureOpenClaudeIsolation } from "@maestro/providers";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -263,14 +263,22 @@ export async function invokeOpenClaude(
         };
       }
 
+      // Ensure isolated OpenClaude settings
+      const settingsPath = await ensureOpenClaudeIsolation(homeDir, {
+        baseUrl: grouterConfig.baseUrl,
+        apiKey: grouterConfig.apiKey || "any-value",
+        model: grouterConfig.model,
+        additionalEnv: grouterConfig.env
+      });
+
       // Build args (prompt goes via stdin, but provider/model must be in args)
       const args = grouterConfig.executableArgs ? [...grouterConfig.executableArgs] : [];
-      args.push("-p", "--provider", "openai", "--model", grouterConfig.model);
+      args.push("-p", "--provider", "openai", "--model", grouterConfig.model, "--settings", settingsPath);
 
-      // Execute OpenClaude with stdin
+      // Execute OpenClaude with stdin and isolated settings
       const result = await runCapturedCommand(grouterConfig.executablePath, args, {
         cwd: grouterConfig.workingDirectory || homeDir,
-        env: { ...process.env, ...grouterConfig.env },
+        env: process.env, // Don't pass grouterConfig.env - settings file handles it
         timeoutMs: grouterConfig.timeoutMs || 300000,
         stdinContent: input.prompt,
         allowStackBufferOverrunWithStdout: true

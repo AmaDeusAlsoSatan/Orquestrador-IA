@@ -44,12 +44,28 @@ export function runCapturedCommand(
     let settled = false;
     let timedOut = false;
 
-    const child = spawn(command, args, {
+    // On Windows, .cmd files with shell: true can break args with spaces
+    // Use shell: false and wrap with cmd.exe /c for proper arg handling
+    const isWindows = process.platform === "win32";
+    const isCmdFile = isWindows && /\.(cmd|bat)$/i.test(command);
+    
+    let spawnCommand = command;
+    let spawnArgs = args;
+    let useShell = options.shell !== undefined ? options.shell : true;
+    
+    if (isCmdFile && useShell) {
+      // Use cmd.exe /c with shell: false for proper quoting
+      spawnCommand = process.env.COMSPEC || "cmd.exe";
+      spawnArgs = ["/c", command, ...args];
+      useShell = false;
+    }
+
+    const child = spawn(spawnCommand, spawnArgs, {
       cwd: options.cwd,
       env: options.env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: options.windowsHide !== undefined ? options.windowsHide : true,
-      shell: options.shell !== undefined ? options.shell : true
+      shell: useShell
     });
 
     // Write stdin content if provided and close immediately

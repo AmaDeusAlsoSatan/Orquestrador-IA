@@ -15,6 +15,7 @@ import {
 } from "@maestro/agents";
 import {
   runCapturedCommand,
+  ensureOpenClaudeIsolation,
   type CapturedCommandResult,
   type RunCapturedCommandOptions
 } from "@maestro/providers";
@@ -1712,13 +1713,17 @@ async function providerTestOpenClaudeGrouter(
   // Save prompt
   await fs.writeFile(path.join(testDir, "01-prompt.md"), prompt, "utf8");
 
+  // Ensure isolated OpenClaude settings
+  const settingsPath = await ensureOpenClaudeIsolation(homeDir, {
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey || "any-value",
+    model: config.model,
+    additionalEnv: config.env
+  });
+
   // Execute OpenClaude
   const execArgs = buildOpenClaudeGrouterArgs(config, variant);
-
-  const env = {
-    ...process.env,
-    ...config.env
-  };
+  execArgs.push("--settings", settingsPath); // Add isolated settings
 
   console.log(`Executing: ${config.executablePath} ${execArgs.join(" ")}\n`);
 
@@ -1731,14 +1736,14 @@ async function providerTestOpenClaudeGrouter(
       prompt,
       variant,
       commandArgs: execArgs,
-      env,
+      env: process.env,
       timeoutMs
     });
   }
 
   const commandResult = await runCapturedCommand(config.executablePath, execArgs, {
     cwd: config.workingDirectory,
-    env,
+    env: process.env, // Don't pass config.env - settings file handles it
     timeoutMs,
     stdinContent: prompt,
     allowStackBufferOverrunWithStdout: true
