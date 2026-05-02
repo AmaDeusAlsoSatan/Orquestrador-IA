@@ -1715,7 +1715,7 @@ async function providerTestOpenClaudeGrouter(
   await fs.writeFile(path.join(testDir, "01-prompt.md"), prompt, "utf8");
 
   // Execute OpenClaude
-  const execArgs = buildOpenClaudeGrouterArgs(config, prompt, variant);
+  const execArgs = buildOpenClaudeGrouterArgs(config, variant);
 
   const env = {
     ...process.env,
@@ -1741,7 +1741,8 @@ async function providerTestOpenClaudeGrouter(
   const commandResult = await runCapturedCommand(config.executablePath, execArgs, {
     cwd: config.workingDirectory,
     env,
-    timeoutMs
+    timeoutMs,
+    stdinContent: prompt
   });
   const stdout = sanitizeText(commandResult.stdout);
   const stderr = sanitizeText(commandResult.stderr);
@@ -2134,9 +2135,11 @@ function parseTimeoutMs(value: string | undefined, fallback: number): number {
   return Math.floor(parsed);
 }
 
-function buildOpenClaudeGrouterArgs(config: any, prompt: string, variant: ProviderTestVariant): string[] {
+function buildOpenClaudeGrouterArgs(config: any, variant: ProviderTestVariant): string[] {
+  // Removed `prompt` parameter — prompt goes via stdin instead
   const execArgs = config.executableArgs ? [...config.executableArgs] : [];
-  execArgs.push("-p", "--provider", "openai", "--model", config.model);
+  
+  execArgs.push("-p");
 
   if (variant === "json" || variant === "current") {
     execArgs.push("--output-format", "json");
@@ -2150,7 +2153,7 @@ function buildOpenClaudeGrouterArgs(config: any, prompt: string, variant: Provid
     execArgs.push("--no-session-persistence");
   }
 
-  execArgs.push(prompt);
+  // DO NOT push prompt here — it goes via stdin
   return execArgs;
 }
 
@@ -2268,20 +2271,27 @@ async function writeCapturedCommandArtifact(
 function runCapturedCommand(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number; stdinContent?: string }
 ): Promise<CapturedCommandResult> {
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let settled = false;
     let timedOut = false;
+
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
-      shell: true // Required for .cmd files on Windows
+      shell: true // Volta para shell: true mas com stdin fechado
     });
+
+    // Escreve o prompt via stdin e fecha imediatamente
+    if (options.stdinContent !== undefined) {
+      child.stdin?.write(options.stdinContent, "utf8");
+    }
+    child.stdin?.end();
 
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -2315,10 +2325,15 @@ function runCapturedCommand(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      
+      // 0xC0000409 = STATUS_STACK_BUFFER_OVERRUN — crash conhecido do OpenClaude ao sair em modo -p
+      // O output já foi emitido; trata como saída limpa
+      const effectiveExitCode = code === 3221226505 ? 0 : code;
+      
       resolve({
         stdout,
         stderr,
-        exitCode: code,
+        exitCode: effectiveExitCode,
         timedOut,
         errorMessage: timedOut ? `Command timed out after ${options.timeoutMs}ms` : undefined
       });

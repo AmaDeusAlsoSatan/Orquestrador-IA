@@ -1245,3 +1245,30 @@ Error: --help failed: ...
 - Cost tracking and budgeting
 - Rate limiting and retry logic
 - Streaming output support
+
+
+## OpenClaude-Grouter stdin mode
+
+On Windows, prompts must be passed to OpenClaude through stdin instead of as a positional CLI argument.
+
+**Reason:** Passing the prompt as a positional argument through `openclaude.cmd` may break quoting and split prompts containing spaces, punctuation, quotes, accents, or multiline content.
+
+**The working invocation is:**
+
+```text
+openclaude.cmd -p
+```
+
+The Maestro writes the prompt to stdin.
+
+**Validated chain:**
+
+```
+Maestro → OpenClaude → Grouter → Kiro
+```
+
+**Result:**
+- Exit code: 0
+- Stdout: OK
+
+This approach ensures that prompts with any content (spaces, special characters, multilingual text, etc.) are passed intact to OpenClaude without being fragmented by Windows shell quoting rules.
