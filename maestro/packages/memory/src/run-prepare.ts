@@ -162,6 +162,8 @@ You are the technical supervisor for ${project.name}.
 
 Read the context pack and the task. Do not implement code. Produce a technical plan for the executor.
 
+**IMPORTANT:** You are running inside Maestro AgentInvocation. You must return the complete technical plan now. Do not say "Let me read files" or "I will start by reading" - you already have the context. Generate the full plan immediately.
+
 ## Task
 
 ${goal}
@@ -176,6 +178,27 @@ ${goal}
 - Define acceptance criteria.
 - Generate objective instructions for the Kiro executor.
 - Keep the executor constrained to the approved plan.
+
+## Required Output Format
+
+Your response MUST include:
+
+\`\`\`markdown
+## Plano Técnico
+[Describe the technical approach]
+
+## Arquivos Relevantes
+[List files to inspect or modify]
+
+## Passos para o Executor
+[Step-by-step instructions]
+
+## Riscos
+[Potential risks and mitigation]
+
+## Critérios de Aceite
+[Acceptance criteria]
+\`\`\`
 
 ## Expected Output
 

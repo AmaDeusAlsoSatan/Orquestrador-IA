@@ -9,6 +9,7 @@ import type {
 import { runCapturedCommand, ensureOpenClaudeIsolation } from "@maestro/providers";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { validateAgentOutput } from "./output-contracts";
 
 export interface AgentProviderAdapter {
   provider: AgentProvider;
@@ -303,6 +304,16 @@ export async function invokeOpenClaude(
         return {
           status: "FAILED",
           errorMessage: "OpenClaude returned empty output"
+        };
+      }
+
+      // Validate output contract
+      const validation = validateAgentOutput(input.role, output);
+      if (!validation.valid) {
+        return {
+          status: "FAILED",
+          errorMessage: `Output contract validation failed: ${validation.reason}`,
+          outputText: output // Save raw output for debugging
         };
       }
 
