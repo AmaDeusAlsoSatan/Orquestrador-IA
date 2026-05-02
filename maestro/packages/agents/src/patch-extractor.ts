@@ -31,12 +31,28 @@ export function extractUnifiedDiffFromAgentOutput(output: string): PatchExtracti
   // Try to extract from fenced code block first
   const fencedPatch = extractFromFencedBlock(output);
   if (fencedPatch) {
+    // Check for truncation
+    const truncationCheck = detectPatchTruncation(fencedPatch);
+    if (!truncationCheck.valid) {
+      return {
+        patch: null,
+        reason: `Patch appears truncated or malformed: ${truncationCheck.reason}`
+      };
+    }
     return { patch: fencedPatch };
   }
   
   // Try to extract unfenced diff
   const unfencedPatch = extractUnfencedDiff(output);
   if (unfencedPatch) {
+    // Check for truncation
+    const truncationCheck = detectPatchTruncation(unfencedPatch);
+    if (!truncationCheck.valid) {
+      return {
+        patch: null,
+        reason: `Patch appears truncated or malformed: ${truncationCheck.reason}`
+      };
+    }
     return { patch: unfencedPatch };
   }
   
@@ -44,6 +60,89 @@ export function extractUnifiedDiffFromAgentOutput(output: string): PatchExtracti
     patch: null,
     reason: "No unified diff found in output (expected fenced ```diff block or 'diff --git' marker)"
   };
+}
+
+/**
+ * Detect if patch appears truncated or malformed
+ * 
+ * Checks for:
+ * - Incomplete hunks (@@  without closing context)
+ * - Lines ending mid-statement (export, const, function without completion)
+ * - Unclosed fenced blocks (``` at start but not at end)
+ * - File headers without content
+ */
+function detectPatchTruncation(patch: string): { valid: boolean; reason?: string } {
+  const lines = patch.split(/\r?\n/);
+  
+  // Check for unclosed fenced block
+  if (patch.startsWith("```") && !patch.trim().endsWith("```")) {
+    return {
+      valid: false,
+      reason: "Patch starts with ``` but doesn't end with ``` (unclosed fence)"
+    };
+  }
+  
+  // Check for incomplete hunks
+  let inHunk = false;
+  let hunkHasContent = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    if (line.startsWith("@@")) {
+      if (inHunk && !hunkHasContent) {
+        return {
+          valid: false,
+          reason: `Hunk at line ${i} has no content (possible truncation)`
+        };
+      }
+      inHunk = true;
+      hunkHasContent = false;
+    } else if (inHunk && (line.startsWith("+") || line.startsWith("-") || line.startsWith(" "))) {
+      hunkHasContent = true;
+    }
+  }
+  
+  // Check last line for incomplete statements
+  const lastLine = lines[lines.length - 1].trim();
+  const incompletePatterns = [
+    /^[+-]\s*(export|import|const|let|var|function|class|interface|type)\s+\w+\s*$/,
+    /^[+-]\s*\w+\s*:\s*$/,
+    /^[+-]\s*\{$/,
+    /^[+-]\s*\[$/,
+    /^[+-]\s*\($/,
+  ];
+  
+  for (const pattern of incompletePatterns) {
+    if (pattern.test(lastLine)) {
+      return {
+        valid: false,
+        reason: `Last line appears incomplete: "${lastLine}" (possible truncation)`
+      };
+    }
+  }
+  
+  // Check for file headers without content
+  let hasFileHeader = false;
+  let hasHunkMarker = false;
+  
+  for (const line of lines) {
+    if (line.startsWith("diff --git") || line.startsWith("---") || line.startsWith("+++")) {
+      hasFileHeader = true;
+    }
+    if (line.startsWith("@@")) {
+      hasHunkMarker = true;
+    }
+  }
+  
+  if (hasFileHeader && !hasHunkMarker) {
+    return {
+      valid: false,
+      reason: "Patch has file headers but no hunk markers (incomplete patch)"
+    };
+  }
+  
+  return { valid: true };
 }
 
 /**

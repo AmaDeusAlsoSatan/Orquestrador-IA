@@ -648,6 +648,36 @@ function renderNextActionPanel(detail: RunDetail): string {
         ${detail.nextActions.map(renderNextActionButton).join("")}
       </div>
     </div>
+    ${renderFailedInvocations(detail)}
+  `;
+}
+
+function renderFailedInvocations(detail: RunDetail): string {
+  const failedInvocations = (detail.agentInvocations || []).filter((inv) => inv.status === "FAILED");
+  
+  if (failedInvocations.length === 0) {
+    return "";
+  }
+  
+  return `
+    <div class="card" style="background: var(--danger-soft, #fee); border: 1px solid var(--danger, #c33); box-shadow: none; margin-bottom: 1rem;">
+      <h3>⚠️ Invocações Falhadas</h3>
+      ${failedInvocations.map((inv) => `
+        <div style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg); border-radius: 4px;">
+          <p><strong>Agente:</strong> ${escapeHtml(inv.role)}</p>
+          <p><strong>Invocation ID:</strong> <code>${escapeHtml(inv.id)}</code></p>
+          <p><strong>Erro:</strong> ${escapeHtml(inv.errorMessage || "Erro desconhecido")}</p>
+          <div class="button-row" style="margin-top: 0.5rem;">
+            ${fileButton(`agents/${inv.id}/02-output.md`, "Ver output do agente")}
+            ${fileButton(`agents/${inv.id}/03-proposed.patch`, "Ver patch proposto")}
+          </div>
+        </div>
+      `).join("")}
+      <p class="muted" style="margin-top: 0.5rem;">
+        <strong>Sugestão:</strong> Revise o output do agente e o patch gerado. 
+        Se o patch está truncado ou malformado, considere criar uma run com escopo menor.
+      </p>
+    </div>
   `;
 }
 
@@ -661,7 +691,9 @@ function renderAutoNextStepButton(detail: RunDetail): string {
   
   // Show for automatic steps
   if (run.status === "PREPARED" || run.status === "SUPERVISOR_PLANNED" || run.status === "EXECUTOR_REPORTED") {
-    return `<button class="primary" data-run-action="NEXT_STEP" style="margin-right: 0.5rem;">⚡ Executar Próximo Passo Automático</button>`;
+    const buttonText = state.busy ? "⏳ Executando... (pode levar alguns minutos)" : "⚡ Executar Próximo Passo Automático";
+    const disabled = state.busy ? "disabled" : "";
+    return `<button class="primary" data-run-action="NEXT_STEP" style="margin-right: 0.5rem;" ${disabled}>${buttonText}</button>`;
   }
   
   // For REVIEWED, check if decision exists
@@ -670,7 +702,9 @@ function renderAutoNextStepButton(detail: RunDetail): string {
       return ""; // Show manual decision buttons instead
     }
     if (detail.decision.status === "APPROVED") {
-      return `<button class="primary" data-run-action="NEXT_STEP" style="margin-right: 0.5rem;">⚡ Executar Próximo Passo Automático</button>`;
+      const buttonText = state.busy ? "⏳ Executando... (pode levar alguns minutos)" : "⚡ Executar Próximo Passo Automático";
+      const disabled = state.busy ? "disabled" : "";
+      return `<button class="primary" data-run-action="NEXT_STEP" style="margin-right: 0.5rem;" ${disabled}>${buttonText}</button>`;
     }
   }
   
@@ -954,8 +988,8 @@ function actionButton(action: string, label: string): string {
   return `<button data-run-action="${action}">${label}</button>`;
 }
 
-function fileButton(fileName: string): string {
-  return `<button data-run-file="${fileName}">${fileName}</button>`;
+function fileButton(fileName: string, label?: string): string {
+  return `<button data-run-file="${fileName}">${label || fileName}</button>`;
 }
 
 function bindForms(): void {
