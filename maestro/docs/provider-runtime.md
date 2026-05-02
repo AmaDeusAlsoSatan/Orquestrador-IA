@@ -801,6 +801,311 @@ Once the test responds correctly (e.g., "OK"), the next phase will be:
 3. Then add Executor role (with file modifications in sandbox)
 4. Integrate into full workflow
 
+## OpenClaude-Grouter Integration (AgentInvocation)
+
+### Overview
+
+The `openclaude_grouter` provider enables Maestro agents to use Kiro models through a fully isolated chain:
+
+```
+Maestro AgentInvocation
+  ↓
+OpenClaude (isolated settings)
+  ↓
+Grouter (fake streaming)
+  ↓
+Kiro Translator
+  ↓
+AWS CodeWhisperer
+```
+
+**Key Features:**
+- **Complete Isolation:** OpenClaude uses isolated settings file via `--settings` flag
+- **No Global Conflicts:** Does not interfere with Kofuku or other projects
+- **Automatic Setup:** Settings file created automatically on first use
+- **Stdin Prompts:** Prompts passed via stdin to avoid Windows quoting issues
+- **Fake Streaming:** Grouter provides simulated SSE streaming for OpenClaude compatibility
+
+**Status:** ✅ Implemented and validated
+
+### Difference from Direct Grouter
+
+**Direct Grouter (`grouter` provider):**
+- Used for provider testing and discovery
+- Requires manual Grouter daemon management
+- Direct HTTP requests to Grouter endpoint
+- Good for: Testing, debugging, manual invocations
+
+**OpenClaude-Grouter (`openclaude_grouter` provider):**
+- Used for agent invocations in runs
+- OpenClaude CLI wraps Grouter endpoint
+- Isolated settings per project
+- Good for: Production workflows, automated agent execution
+
+### Configuration
+
+**File:** `data/config/openclaude-grouter.json`
+
+```json
+{
+  "openclaudeBin": "C:\\Users\\YourUser\\AppData\\Roaming\\npm\\node_modules\\openclaude\\bin\\openclaude",
+  "model": "kiro/claude-sonnet-4.5",
+  "grouterBaseUrl": "http://127.0.0.1:3099/v1",
+  "grouterApiKey": "any-value"
+}
+```
+
+**Required Fields:**
+
+- `openclaudeBin`: Path to OpenClaude CLI executable
+- `model`: Kiro model to use (e.g., `kiro/claude-sonnet-4.5`)
+- `grouterBaseUrl`: Grouter endpoint URL (default: `http://127.0.0.1:3099/v1`)
+- `grouterApiKey`: API key for Grouter (can be any value, e.g., `any-value`)
+
+**Optional Fields:**
+
+- `timeoutMs`: Timeout for invocations (default: 300000 = 5 minutes)
+- `homeDir`: Custom isolated home directory (default: `data/providers/openclaude-grouter/home`)
+
+### Isolation Strategy
+
+**OpenClaude Isolation:**
+
+The provider creates an isolated OpenClaude settings file:
+
+```
+data/providers/openclaude-grouter/home/settings.json
+```
+
+This file contains:
+```json
+{
+  "baseUrl": "http://127.0.0.1:3099/v1",
+  "apiKey": "any-value",
+  "model": "kiro/claude-sonnet-4.5"
+}
+```
+
+**How Isolation Works:**
+
+1. Maestro calls `ensureOpenClaudeIsolation()` before each invocation
+2. Function creates isolated home directory if needed
+3. Function writes isolated `settings.json` with Grouter config
+4. OpenClaude invoked with `--settings <isolated-path>` flag
+5. OpenClaude uses isolated settings, ignoring global `~/.openclaude/settings.json`
+
+**Benefits:**
+
+- ✅ Kofuku continues using global settings (port 3104, model `kofuku-auto`)
+- ✅ Maestro uses isolated settings (port 3099, model `kiro/claude-sonnet-4.5`)
+- ✅ No manual configuration switching required
+- ✅ No risk of interfering with other projects
+
+**Grouter Storage:**
+
+Grouter continues using global storage (`~/.grouter/grouter.db`) by design. This is acceptable because:
+- Grouter acts as account vault/manager
+- Maestro uses explicit connection linking (allowlist)
+- No credential duplication
+- Single source of truth for Kiro authorization
+
+### Command Execution
+
+**Provider Test:**
+
+```bash
+maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST
+```
+
+**Agent Invocation (Automatic):**
+
+When an agent is configured with `openclaude_grouter` provider, Maestro automatically:
+
+1. Loads config from `data/config/openclaude-grouter.json`
+2. Ensures isolated OpenClaude home exists
+3. Writes isolated settings file
+4. Builds command: `node <openclaude-bin> -p --provider openai --model <model>`
+5. Passes prompt via stdin (avoids Windows quoting issues)
+6. Injects `--settings <isolated-path>` flag
+7. Captures stdout and returns as agent output
+
+**Example Command:**
+
+```bash
+node C:\...\openclaude\bin\openclaude -p --provider openai --model kiro/claude-sonnet-4.5 --settings C:\...\maestro\data\providers\openclaude-grouter\home\settings.json
+```
+
+**Stdin Input:**
+```
+Your task is to...
+```
+
+### Workflow
+
+**Initial Setup:**
+
+1. Ensure Grouter daemon is running:
+   ```bash
+   grouter serve on
+   ```
+
+2. Verify Grouter has Kiro connection:
+   ```bash
+   grouter list
+   ```
+
+3. Create config file:
+   ```bash
+   cp config/openclaude-grouter.example.json data/config/openclaude-grouter.json
+   ```
+
+4. Edit config with correct paths and model
+
+5. Run provider test:
+   ```bash
+   maestro provider test --provider openclaude_grouter --prompt "Responda apenas: OK" --confirm RUN_PROVIDER_TEST
+   ```
+
+6. If test passes, provider is ready for agent invocations
+
+**Agent Configuration:**
+
+In `data/config/agent-model-map.json`:
+
+```json
+{
+  "CTO_SUPERVISOR": {
+    "provider": "openclaude_grouter",
+    "model": "kiro/claude-sonnet-4.5"
+  },
+  "FULL_STACK_EXECUTOR": {
+    "provider": "openclaude_grouter",
+    "model": "kiro/claude-sonnet-4.5"
+  },
+  "CODE_REVIEWER": {
+    "provider": "openclaude_grouter",
+    "model": "kiro/claude-sonnet-4.5"
+  }
+}
+```
+
+### Validated Chain
+
+The complete chain has been validated:
+
+**Provider Test:**
+- ✅ Exit code: 0
+- ✅ Status: SUCCESS
+- ✅ Output: "OK"
+
+**Agent Invocation:**
+- ✅ Status: SUCCEEDED
+- ✅ Output: "OK"
+- ✅ Isolated settings used
+- ✅ Global Kofuku settings preserved
+
+**Full Chain:**
+1. ✅ Maestro AgentInvocation → Prompt prepared
+2. ✅ OpenClaude (isolated) → Receives prompt via stdin
+3. ✅ Grouter (fake streaming) → Wraps response in SSE format
+4. ✅ Kiro Translator → Calls AWS SDK
+5. ✅ AWS CodeWhisperer → Returns response
+
+### Security
+
+**What is Isolated:**
+- ✅ OpenClaude settings file
+- ✅ OpenClaude home directory
+- ✅ No interference with global OpenClaude config
+
+**What is NOT Isolated:**
+- ⚠️ Grouter storage (global by design)
+- ⚠️ Grouter daemon (shared across projects)
+
+**Mitigation:**
+- Grouter uses explicit connection linking (allowlist)
+- Maestro never copies credentials
+- Grouter acts as single source of truth for accounts
+
+**Privacy:**
+- Email addresses masked in logs
+- No tokens logged
+- Settings file contains only endpoint config (no credentials)
+
+### Troubleshooting
+
+**Issue: Provider test times out**
+
+Check:
+1. Is Grouter daemon running? `grouter serve`
+2. Is Kiro connection active? `grouter list`
+3. Is model correct? `grouter models`
+4. Check Grouter logs: `grouter serve logs`
+
+**Issue: "Existing global auth detected"**
+
+This is expected for Grouter. The provider uses explicit linking, not isolation.
+
+**Issue: OpenClaude uses wrong settings**
+
+Verify:
+1. `--settings` flag is being passed
+2. Isolated settings file exists: `data/providers/openclaude-grouter/home/settings.json`
+3. Settings file contains correct Grouter endpoint
+
+**Issue: Kofuku affected by Maestro**
+
+This should NOT happen. Verify:
+1. Kofuku uses global settings: `~/.openclaude/settings.json`
+2. Maestro uses isolated settings: `data/providers/openclaude-grouter/home/settings.json`
+3. Check Kofuku settings file is unchanged
+
+### Limitations
+
+**Current Limitations:**
+
+1. **Fake Streaming:** Grouter simulates SSE streaming over non-streaming Kiro SDK
+   - Not true incremental token streaming
+   - Full response generated before streaming starts
+   - Sufficient for OpenClaude compatibility
+
+2. **Windows .cmd Files:** Special handling required for `.cmd` files with spaces in paths
+   - Uses `cmd.exe /c` with `shell: false`
+   - Avoids DEP0190 warnings
+
+3. **Exit Code 3221226505:** OpenClaude crash exit code
+   - Treated as success only if stdout is not empty
+   - Requires explicit flag: `allowStackBufferOverrunWithStdout: true`
+
+### Next Steps
+
+**After Successful Validation:**
+
+1. ✅ Provider test passing
+2. ✅ Agent invocation passing
+3. ⏭️ Configure all agents (Supervisor, Executor, Reviewer)
+4. ⏭️ Test with real task (e.g., documentation update)
+5. ⏭️ Integrate into full workflow (CEO → Supervisor → Executor → Reviewer)
+6. ⏭️ Test with production project (e.g., One Piece Tag Force)
+
+### References
+
+**Related Documentation:**
+- [Grouter Bridge (PRIMARY)](#grouter-bridge-primary)
+- [OpenClaude-Grouter Provider Test](#openclaude-grouter-provider-test)
+- [Grouter Account Linking](#grouter-account-linking)
+
+**Related Files:**
+- `packages/providers/src/openclaude-home.ts` - Isolation module
+- `packages/providers/src/command-runner.ts` - Command execution
+- `packages/agents/src/runtime.ts` - Agent runtime adapter
+- `apps/cli/src/index.ts` - Provider test implementation
+
+**Commits:**
+- `5e42f05` - fix: isolate openclaude grouter runtime
+- `2d4ab76` - feat: enable openclaude grouter agent invocations
+- `14e7943` - fix: pass openclaude grouter prompts via stdin
+
 ## Kiro CLI Direct (EXPERIMENTAL - Quarantined)
 
 ### Overview
