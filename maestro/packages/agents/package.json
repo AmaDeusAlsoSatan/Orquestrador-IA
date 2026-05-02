@@ -17,6 +17,8 @@
   },
   "dependencies": {
     "@maestro/core": "workspace:*",
-    "@maestro/providers": "workspace:*"
+    "@maestro/memory": "workspace:*",
+    "@maestro/providers": "workspace:*",
+    "@maestro/runner": "workspace:*"
   }
 }

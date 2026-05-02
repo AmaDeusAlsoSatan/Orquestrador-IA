@@ -55,9 +55,15 @@ importers:
       '@maestro/core':
         specifier: workspace:*
         version: link:../core
+      '@maestro/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@maestro/providers':
         specifier: workspace:*
         version: link:../providers
+      '@maestro/runner':
+        specifier: workspace:*
+        version: link:../runner
 
   packages/core: {}
 

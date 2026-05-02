@@ -12,6 +12,7 @@ import {
   createDefaultAgentProfiles,
   extractUnifiedDiffFromAgentOutput,
   prepareAgentInvocation,
+  processExecutorPatchFlow,
   validatePatchSafety,
   type OpenClaudeAdapterConfig
 } from "@maestro/agents";
@@ -510,15 +511,15 @@ async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void
   if (result.invocation.status === "SUCCEEDED") {
     // For FULL_STACK_EXECUTOR, extract and apply patch before promotion
     if (result.invocation.role === "FULL_STACK_EXECUTOR") {
-      const patchResult = await processExecutorPatch(
+      const patchResult = await processExecutorPatchFlow({
         homeDir,
-        result.invocation,
-        result.outputPath,
+        invocation: result.invocation,
+        outputPath: result.outputPath,
         project,
         run,
         workspace,
-        nextState
-      );
+        state: nextState
+      });
       
       nextState = upsertAgentInvocation(patchResult.state, patchResult.invocation);
       patchArtifactPath = patchResult.patchArtifactPath;

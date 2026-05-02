@@ -603,6 +603,57 @@ async function invokeRunAgentRoute(context: RequestContext, runId: string) {
   let stageOutputPath: string | undefined;
   let updatedRun: RunRecord | undefined;
 
+  // For FULL_STACK_EXECUTOR, process patch before promotion
+  if (result.invocation.role === "FULL_STACK_EXECUTOR" && result.invocation.status === "SUCCEEDED") {
+    try {
+      const { processExecutorPatchFlow } = await import("@maestro/agents");
+      const patchResult = await processExecutorPatchFlow({
+        homeDir: context.homeDir,
+        invocation: result.invocation,
+        outputPath: result.outputPath,
+        project,
+        run,
+        workspace,
+        state: nextState
+      });
+      
+      // Update invocation and state with patch processing result
+      nextState = upsertAgentInvocation(patchResult.state, patchResult.invocation);
+      
+      // If patch processing failed, don't promote to stage
+      if (patchResult.invocation.status === "FAILED") {
+        await saveState(context.homeDir, nextState);
+        return {
+          ...result,
+          invocation: patchResult.invocation,
+          run
+        };
+      }
+      
+      // Log patch processing success
+      if (patchResult.patchArtifactPath) {
+        console.log(`Patch applied successfully to workspace`);
+        console.log(`Patch artifact: ${patchResult.patchArtifactPath}`);
+        console.log(`Workspace: ${patchResult.workspacePath}`);
+        console.log(`Files changed: ${patchResult.changedFilesCount || 0}`);
+      }
+    } catch (error) {
+      // If patch processing fails, mark invocation as failed
+      const failedInvocation = {
+        ...result.invocation,
+        status: "FAILED" as const,
+        errorMessage: `Patch processing error: ${error instanceof Error ? error.message : String(error)}`
+      };
+      nextState = upsertAgentInvocation(nextState, failedInvocation);
+      await saveState(context.homeDir, nextState);
+      return {
+        ...result,
+        invocation: failedInvocation,
+        run
+      };
+    }
+  }
+
   // Automatic stage promotion: if invocation succeeded, promote output to run stage
   if (result.invocation.status === "SUCCEEDED") {
     const stage = runStageForAgentInvocationStage(result.invocation.stage);
