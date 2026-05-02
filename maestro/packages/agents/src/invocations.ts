@@ -121,9 +121,9 @@ export function promptFileForStage(stage: AgentInvocation["stage"]): string {
     case "SUPERVISOR_PLAN":
       return "03-codex-supervisor-prompt.md";
     case "EXECUTOR_IMPLEMENT":
-      return path.join("handoff", "07-kiro-prompt.md");
+      return "04-kiro-executor-prompt.md";
     case "REVIEWER_REVIEW":
-      return path.join("review", "08-codex-reviewer-prompt.md");
+      return "05-codex-reviewer-prompt.md";
     case "QA_VALIDATE":
       return "24-validation-workspace.md";
   }
