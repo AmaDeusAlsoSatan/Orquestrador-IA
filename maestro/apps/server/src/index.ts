@@ -599,8 +599,32 @@ async function invokeRunAgentRoute(context: RequestContext, runId: string) {
     openClaudeConfig: await readOpenClaudeRuntimeConfig(context.homeDir)
   });
 
-  await saveState(context.homeDir, upsertAgentInvocation(state, result.invocation));
-  return result;
+  let nextState = upsertAgentInvocation(state, result.invocation);
+  let stageOutputPath: string | undefined;
+  let updatedRun: RunRecord | undefined;
+
+  // Automatic stage promotion: if invocation succeeded, promote output to run stage
+  if (result.invocation.status === "SUCCEEDED") {
+    const stage = runStageForAgentInvocationStage(result.invocation.stage);
+    if (stage) {
+      try {
+        const attachResult = await attachRunStage(project, run, stage, result.outputPath);
+        nextState = upsertRun(nextState, attachResult.runRecord);
+        stageOutputPath = attachResult.outputPath;
+        updatedRun = attachResult.runRecord;
+      } catch (error) {
+        // Log error but don't fail the invocation
+        console.error(`Failed to promote agent output to run stage: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
+  await saveState(context.homeDir, nextState);
+  return {
+    ...result,
+    stageOutputPath,
+    run: updatedRun || run
+  };
 }
 
 async function attachRunAgentOutputRoute(context: RequestContext, runId: string, invocationId: string | undefined) {

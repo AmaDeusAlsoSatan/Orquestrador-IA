@@ -356,19 +356,60 @@ async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void
     homeDir
   });
 
-  await saveState(homeDir, upsertAgentInvocation(state, result.invocation));
-  console.log(`Agent invocation prepared: ${result.invocation.id}`);
-  console.log(`Role: ${result.invocation.role}`);
-  console.log(`Provider: ${result.invocation.provider}`);
-  console.log(`Status: ${result.invocation.status}`);
-  console.log(`Prompt: ${result.promptPath}`);
-  console.log(`Output: ${result.outputPath}`);
-  if (result.invocation.blockedReason) {
-    console.log(`Reason: ${result.invocation.blockedReason}`);
+  let nextState = upsertAgentInvocation(state, result.invocation);
+  let stageOutputPath: string | undefined;
+
+  // Automatic stage promotion: if invocation succeeded, promote output to run stage
+  if (result.invocation.status === "SUCCEEDED") {
+    const stage = runStageForAgentInvocationStage(result.invocation.stage);
+    if (stage) {
+      try {
+        const attachResult = await attachRunStage(project, run, stage, result.outputPath);
+        nextState = upsertRun(nextState, attachResult.runRecord);
+        stageOutputPath = attachResult.outputPath;
+        console.log(`Agent invocation prepared: ${result.invocation.id}`);
+        console.log(`Role: ${result.invocation.role}`);
+        console.log(`Provider: ${result.invocation.provider}`);
+        console.log(`Status: ${result.invocation.status}`);
+        console.log(`Prompt: ${result.promptPath}`);
+        console.log(`Output: ${result.outputPath}`);
+        console.log(`Run stage promoted: ${stage}`);
+        console.log(`Run stage output: ${stageOutputPath}`);
+        console.log(`Run status: ${attachResult.runRecord.status}`);
+      } catch (error) {
+        console.log(`Agent invocation prepared: ${result.invocation.id}`);
+        console.log(`Role: ${result.invocation.role}`);
+        console.log(`Provider: ${result.invocation.provider}`);
+        console.log(`Status: ${result.invocation.status}`);
+        console.log(`Prompt: ${result.promptPath}`);
+        console.log(`Output: ${result.outputPath}`);
+        console.log(`Warning: Failed to promote to run stage: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      console.log(`Agent invocation prepared: ${result.invocation.id}`);
+      console.log(`Role: ${result.invocation.role}`);
+      console.log(`Provider: ${result.invocation.provider}`);
+      console.log(`Status: ${result.invocation.status}`);
+      console.log(`Prompt: ${result.promptPath}`);
+      console.log(`Output: ${result.outputPath}`);
+      console.log(`Run stage promotion: not applicable for this role`);
+    }
+  } else {
+    console.log(`Agent invocation prepared: ${result.invocation.id}`);
+    console.log(`Role: ${result.invocation.role}`);
+    console.log(`Provider: ${result.invocation.provider}`);
+    console.log(`Status: ${result.invocation.status}`);
+    console.log(`Prompt: ${result.promptPath}`);
+    console.log(`Output: ${result.outputPath}`);
+    if (result.invocation.blockedReason) {
+      console.log(`Reason: ${result.invocation.blockedReason}`);
+    }
+    if (result.invocation.errorMessage) {
+      console.log(`Error: ${result.invocation.errorMessage}`);
+    }
   }
-  if (result.invocation.errorMessage) {
-    console.log(`Error: ${result.invocation.errorMessage}`);
-  }
+
+  await saveState(homeDir, nextState);
 }
 
 async function attachAgentOutputCommand(homeDir: string, args: string[]): Promise<void> {

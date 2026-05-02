@@ -1152,6 +1152,47 @@ Agent prompts are generated in `packages/memory/src/run-prepare.ts`:
 
 Each prompt uses role-based identity and explicitly instructs the model not to discuss its identity.
 
+### Agent Invocation Stage Promotion
+
+**Automatic Output Promotion:**
+
+When an AgentInvocation succeeds and passes its output contract, Maestro automatically promotes the output into the corresponding run stage artifact.
+
+**Role to Stage Mapping:**
+
+| Agent Role | Invocation Stage | Run Stage | Output File | Next Run Status |
+|------------|------------------|-----------|-------------|-----------------|
+| CTO_SUPERVISOR | SUPERVISOR_PLAN | supervisor | 07-supervisor-output.md | SUPERVISOR_PLANNED |
+| FULL_STACK_EXECUTOR | EXECUTOR_IMPLEMENT | executor | 08-executor-output.md | EXECUTOR_REPORTED |
+| CODE_REVIEWER | REVIEWER_REVIEW | reviewer | 09-reviewer-output.md | REVIEWED |
+| CEO | CEO_INTAKE | (none) | (not promoted) | (unchanged) |
+| QA_VALIDATOR | QA_VALIDATE | (none) | (not promoted) | (unchanged) |
+
+**How It Works:**
+
+1. Agent invocation executes via `prepareAgentInvocation()`
+2. Output is validated against output contract
+3. If status is `SUCCEEDED`, output is automatically promoted:
+   - Output copied to run stage file (e.g., `07-supervisor-output.md`)
+   - Run status updated (e.g., `PREPARED` → `SUPERVISOR_PLANNED`)
+   - Next stage prompt regenerated with new context
+4. If promotion fails, invocation still succeeds but warning is logged
+
+**Benefits:**
+
+- ✅ No manual `maestro run attach` required
+- ✅ Automatic workflow progression
+- ✅ Consistent with manual attach behavior
+- ✅ Preserves both invocation artifact and run stage artifact
+
+**Implementation:**
+
+Automatic promotion is implemented in:
+- `apps/cli/src/index.ts` - `invokeAgentCommand()` function
+- `apps/server/src/index.ts` - `invokeRunAgentRoute()` function
+
+Both reuse the existing `attachRunStage()` function from `packages/memory/src/run-lifecycle.ts`.
+
 ### References
 
 **Related Documentation:**
@@ -1163,13 +1204,17 @@ Each prompt uses role-based identity and explicitly instructs the model not to d
 - `packages/providers/src/openclaude-home.ts` - Isolation module
 - `packages/providers/src/command-runner.ts` - Command execution
 - `packages/agents/src/runtime.ts` - Agent runtime adapter
+- `packages/agents/src/output-contracts.ts` - Output validation
 - `packages/memory/src/run-prepare.ts` - Prompt generation with role-based identity
-- `apps/cli/src/index.ts` - Provider test implementation
+- `packages/memory/src/run-lifecycle.ts` - Run stage attachment
+- `apps/cli/src/index.ts` - CLI with automatic promotion
+- `apps/server/src/index.ts` - Server with automatic promotion
 
 **Commits:**
 - `5e42f05` - fix: isolate openclaude grouter runtime
 - `2d4ab76` - feat: enable openclaude grouter agent invocations
 - `14e7943` - fix: pass openclaude grouter prompts via stdin
+- `66fff76` - fix: use role-based agent prompt identity
 
 ## Kiro CLI Direct (EXPERIMENTAL - Quarantined)
 
