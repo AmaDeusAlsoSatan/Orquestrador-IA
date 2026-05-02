@@ -6,6 +6,9 @@ import type {
   AgentRole,
   AgentRunStatus
 } from "@maestro/core";
+import { runCapturedCommand } from "@maestro/providers";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 export interface AgentProviderAdapter {
   provider: AgentProvider;
@@ -22,10 +25,12 @@ export interface AgentInvocationInput {
   cwd?: string;
   workspacePath?: string;
   metadata?: Record<string, unknown>;
+  homeDir?: string;
 }
 
 export interface AgentInvocationResult {
   status: Extract<AgentRunStatus, "SUCCEEDED" | "FAILED" | "BLOCKED">;
+  output?: string;
   outputText?: string;
   outputPath?: string;
   blockedReason?: string;
@@ -164,7 +169,7 @@ export function getAdapterForProvider(provider: AgentProvider, config: OpenClaud
     return createManualAdapter(provider);
   }
 
-  if (provider === "openclaude" || provider === "kiro_openclaude") {
+  if (provider === "openclaude" || provider === "kiro_openclaude" || provider === "openclaude_grouter") {
     return createOpenClaudeAdapter(provider, config);
   }
 
@@ -231,6 +236,81 @@ export async function invokeOpenClaude(
   config: OpenClaudeAdapterConfig,
   provider: AgentProvider = "openclaude"
 ): Promise<AgentInvocationResult> {
+  // For openclaude_grouter, execute real invocation (loads its own config)
+  if (provider === "openclaude_grouter") {
+    try {
+      // Load openclaude-grouter config
+      const homeDir = input.homeDir || process.cwd();
+      const configPath = path.join(homeDir, "data", "config", "openclaude-grouter.json");
+      
+      let grouterConfig: any;
+      try {
+        const configContent = await fs.readFile(configPath, "utf8");
+        grouterConfig = JSON.parse(configContent);
+      } catch (error) {
+        return {
+          status: "BLOCKED",
+          blockedReason: "Config not found",
+          errorMessage: `openclaude-grouter config not found at ${configPath}. Run: maestro provider doctor --provider openclaude_grouter`
+        };
+      }
+
+      if (!grouterConfig.executablePath) {
+        return {
+          status: "BLOCKED",
+          blockedReason: "Executable not configured",
+          errorMessage: "openclaude-grouter executablePath not configured"
+        };
+      }
+
+      // Build args (prompt goes via stdin, but provider/model must be in args)
+      const args = grouterConfig.executableArgs ? [...grouterConfig.executableArgs] : [];
+      args.push("-p", "--provider", "openai", "--model", grouterConfig.model);
+
+      // Execute OpenClaude with stdin
+      const result = await runCapturedCommand(grouterConfig.executablePath, args, {
+        cwd: grouterConfig.workingDirectory || homeDir,
+        env: { ...process.env, ...grouterConfig.env },
+        timeoutMs: grouterConfig.timeoutMs || 300000,
+        stdinContent: input.prompt,
+        allowStackBufferOverrunWithStdout: true
+      });
+
+      if (result.timedOut) {
+        return {
+          status: "FAILED",
+          errorMessage: `OpenClaude timed out after ${grouterConfig.timeoutMs || 300000}ms`
+        };
+      }
+
+      if (result.exitCode !== 0) {
+        return {
+          status: "FAILED",
+          errorMessage: `OpenClaude exited with code ${result.exitCode}: ${result.stderr || result.errorMessage || "unknown error"}`
+        };
+      }
+
+      const output = result.stdout.trim();
+      if (!output) {
+        return {
+          status: "FAILED",
+          errorMessage: "OpenClaude returned empty output"
+        };
+      }
+
+      return {
+        status: "SUCCEEDED",
+        outputText: output
+      };
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `OpenClaude execution failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
+  // For other OpenClaude providers, check if configured
   const configured = Boolean(config.executablePath && config.workingDirectory);
 
   if (!configured) {
@@ -246,6 +326,7 @@ export async function invokeOpenClaude(
     };
   }
 
+  // For other providers, still blocked
   return {
     status: "BLOCKED",
     blockedReason: "Automatic execution disabled",

@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@maestro/core": "workspace:*"
+    "@maestro/core": "workspace:*",
+    "@maestro/providers": "workspace:*"
   }
 }

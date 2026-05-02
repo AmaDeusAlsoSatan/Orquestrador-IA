@@ -13,6 +13,11 @@ import {
   prepareAgentInvocation,
   type OpenClaudeAdapterConfig
 } from "@maestro/agents";
+import {
+  runCapturedCommand,
+  type CapturedCommandResult,
+  type RunCapturedCommandOptions
+} from "@maestro/providers";
 
 const execFileAsync = promisify(execFile);
 import {
@@ -136,14 +141,6 @@ interface ParsedFlags {
 }
 
 type ProviderTestVariant = "minimal" | "json" | "bare" | "no-session" | "current";
-
-interface CapturedCommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  timedOut: boolean;
-  errorMessage?: string;
-}
 
 const TASK_STATUS_ORDER: TaskStatus[] = ["TODO", "READY", "IN_PROGRESS", "REVIEW_NEEDED", "BLOCKED", "DONE", "CANCELLED"];
 const TASK_PRIORITY_ORDER: TaskPriority[] = ["URGENT", "HIGH", "MEDIUM", "LOW"];
@@ -354,7 +351,8 @@ async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void
     project,
     profile,
     workspace,
-    openClaudeConfig: await readOpenClaudeRuntimeConfig(homeDir)
+    openClaudeConfig: await readOpenClaudeRuntimeConfig(homeDir),
+    homeDir
   });
 
   await saveState(homeDir, upsertAgentInvocation(state, result.invocation));
@@ -1742,7 +1740,8 @@ async function providerTestOpenClaudeGrouter(
     cwd: config.workingDirectory,
     env,
     timeoutMs,
-    stdinContent: prompt
+    stdinContent: prompt,
+    allowStackBufferOverrunWithStdout: true
   });
   const stdout = sanitizeText(commandResult.stdout);
   const stderr = sanitizeText(commandResult.stderr);
@@ -2136,10 +2135,10 @@ function parseTimeoutMs(value: string | undefined, fallback: number): number {
 }
 
 function buildOpenClaudeGrouterArgs(config: any, variant: ProviderTestVariant): string[] {
-  // Removed `prompt` parameter — prompt goes via stdin instead
+  // Prompt goes via stdin, but provider/model must be in args
   const execArgs = config.executableArgs ? [...config.executableArgs] : [];
   
-  execArgs.push("-p");
+  execArgs.push("-p", "--provider", "openai", "--model", config.model);
 
   if (variant === "json" || variant === "current") {
     execArgs.push("--output-format", "json");
@@ -2266,79 +2265,6 @@ async function writeCapturedCommandArtifact(
   const result = await runCapturedCommand(command, args, options);
   const output = renderCapturedCommandResult(command, args, result, options.maxChars);
   await fs.writeFile(filePath, output, "utf8");
-}
-
-function runCapturedCommand(
-  command: string,
-  args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number; stdinContent?: string }
-): Promise<CapturedCommandResult> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      shell: true // Volta para shell: true mas com stdin fechado
-    });
-
-    // Escreve o prompt via stdin e fecha imediatamente
-    if (options.stdinContent !== undefined) {
-      child.stdin?.write(options.stdinContent, "utf8");
-    }
-    child.stdin?.end();
-
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-      setTimeout(() => {
-        if (!settled) {
-          child.kill("SIGKILL");
-        }
-      }, 1500).unref();
-    }, options.timeoutMs);
-
-    child.stdout?.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve({
-        stdout,
-        stderr,
-        exitCode: null,
-        timedOut,
-        errorMessage: error.message
-      });
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      
-      // 0xC0000409 = STATUS_STACK_BUFFER_OVERRUN — crash conhecido do OpenClaude ao sair em modo -p
-      // O output já foi emitido; trata como saída limpa
-      const effectiveExitCode = code === 3221226505 ? 0 : code;
-      
-      resolve({
-        stdout,
-        stderr,
-        exitCode: effectiveExitCode,
-        timedOut,
-        errorMessage: timedOut ? `Command timed out after ${options.timeoutMs}ms` : undefined
-      });
-    });
-  });
 }
 
 function renderCapturedCommandResult(command: string, args: string[], result: CapturedCommandResult, maxChars = 50000): string {
@@ -5004,7 +4930,7 @@ function runStageForAgentInvocationStage(stage: AgentInvocation["stage"]): RunSt
 }
 
 function parseAgentProvider(value: string): AgentProvider {
-  const allowed: AgentProvider[] = ["manual", "openclaude", "codex_manual", "kiro_openclaude"];
+  const allowed: AgentProvider[] = ["manual", "openclaude", "codex_manual", "kiro_openclaude", "openclaude_grouter"];
 
   if (allowed.includes(value as AgentProvider)) {
     return value as AgentProvider;
@@ -5529,7 +5455,7 @@ function printAgentsHelp(): void {
   maestro agents init-defaults
   maestro agents list
   maestro agents show --agent <id>
-  maestro agents update --agent <id> [--provider <manual|openclaude|codex_manual|kiro_openclaude>] [--model <model>]
+  maestro agents update --agent <id> [--provider <manual|openclaude|codex_manual|kiro_openclaude|openclaude_grouter>] [--model <model>]
 `);
 }
 

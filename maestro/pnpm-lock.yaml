@@ -55,6 +55,9 @@ importers:
       '@maestro/core':
         specifier: workspace:*
         version: link:../core
+      '@maestro/providers':
+        specifier: workspace:*
+        version: link:../providers
 
   packages/core: {}
 

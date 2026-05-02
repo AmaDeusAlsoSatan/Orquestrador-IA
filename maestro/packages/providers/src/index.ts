@@ -7,6 +7,7 @@ export * from "./grouter-connections";
 export * from "./openclaude-grouter-doctor";
 export * from "./auth-parser";
 export * from "./auth-session";
+export * from "./command-runner";
 
 export const PROVIDER_INTEGRATION_STATUS = "planned";
 

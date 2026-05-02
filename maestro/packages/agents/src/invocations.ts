@@ -9,6 +9,7 @@ export interface PrepareAgentInvocationOptions {
   profile: AgentProfile;
   workspace?: RunWorkspace;
   openClaudeConfig?: OpenClaudeAdapterConfig;
+  homeDir?: string;
 }
 
 export interface PrepareAgentInvocationResult {
@@ -24,7 +25,7 @@ export interface AttachAgentInvocationOutputResult {
 }
 
 export async function prepareAgentInvocation(options: PrepareAgentInvocationOptions): Promise<PrepareAgentInvocationResult> {
-  const { run, project, profile, workspace, openClaudeConfig } = options;
+  const { run, project, profile, workspace, openClaudeConfig, homeDir } = options;
   if (run.status === "FINALIZED" || run.status === "BLOCKED") {
     throw new Error(`Cannot invoke agent for run ${run.id} because it is ${run.status}. Create a new run or use a future audit mode.`);
   }
@@ -50,6 +51,7 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
     prompt,
     cwd: workspace?.workspacePath || project.repoPath,
     workspacePath: workspace?.workspacePath,
+    homeDir,
     metadata: {
       projectName: project.name,
       runGoal: run.goal,
