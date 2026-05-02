@@ -644,10 +644,37 @@ function renderNextActionPanel(detail: RunDetail): string {
       <p class="muted">${escapeHtml(primary.description)}</p>
       ${renderNextActionInstructions(detail, primary)}
       <div class="button-row" style="margin-top: 0.75rem;">
+        ${renderAutoNextStepButton(detail)}
         ${detail.nextActions.map(renderNextActionButton).join("")}
       </div>
     </div>
   `;
+}
+
+function renderAutoNextStepButton(detail: RunDetail): string {
+  const run = detail.run;
+  
+  // Don't show for finalized or blocked runs
+  if (run.status === "FINALIZED" || run.status === "BLOCKED") {
+    return "";
+  }
+  
+  // Show for automatic steps
+  if (run.status === "PREPARED" || run.status === "SUPERVISOR_PLANNED" || run.status === "EXECUTOR_REPORTED") {
+    return `<button class="primary" data-run-action="NEXT_STEP" style="margin-right: 0.5rem;">⚡ Executar Próximo Passo Automático</button>`;
+  }
+  
+  // For REVIEWED, check if decision exists
+  if (run.status === "REVIEWED") {
+    if (!detail.decision) {
+      return ""; // Show manual decision buttons instead
+    }
+    if (detail.decision.status === "APPROVED") {
+      return `<button class="primary" data-run-action="NEXT_STEP" style="margin-right: 0.5rem;">⚡ Executar Próximo Passo Automático</button>`;
+    }
+  }
+  
+  return "";
 }
 
 function renderNextActionInstructions(detail: RunDetail, action: NextAction): string {

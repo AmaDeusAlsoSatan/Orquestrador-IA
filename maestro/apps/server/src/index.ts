@@ -736,11 +736,13 @@ async function attachCommitRoute(context: RequestContext, runId: string) {
   return { run: result.runRecord, commitFilePath: result.commitFilePath };
 }
 
-async function runControlledAction(context: RequestContext, runId: string) {
+async function runControlledAction(context: RequestContext, runId: string): Promise<unknown> {
   const body = asRecord(context.body) as RunActionBody;
   const action = requireString(body.action, "action");
 
   switch (action) {
+    case "NEXT_STEP":
+      return executeNextStepAction(context, runId);
     case "CREATE_WORKSPACE":
       return createWorkspaceAction(context, runId, Boolean(body.force));
     case "GENERATE_HANDOFF":
@@ -767,6 +769,140 @@ async function runControlledAction(context: RequestContext, runId: string) {
       throw new ApiError(403, "PATCH_APPLY is intentionally disabled in the UI MVP.");
     default:
       throw new ApiError(400, `Unsupported run action: ${action}`);
+  }
+}
+
+async function executeNextStepAction(context: RequestContext, runId: string): Promise<unknown> {
+  const { state } = await loadState(context.homeDir);
+  const run = getRunOrThrow(state, runId);
+  const project = getProjectOrThrow(state, run.projectId);
+  
+  // Determine next action based on run status and artifacts
+  const nextAction = await determineNextAction(run, state, context.homeDir);
+  
+  switch (nextAction.type) {
+    case "INVOKE_AGENT":
+      // Invoke the specified agent role
+      const invokeContext = {
+        ...context,
+        body: { role: nextAction.role }
+      };
+      return invokeRunAgentRoute(invokeContext, runId);
+    
+    case "RUN_ACTION":
+      // Execute a run action (patch export, check, plan, etc)
+      const actionContext = {
+        ...context,
+        body: { action: nextAction.action }
+      };
+      return runControlledAction(actionContext, runId);
+    
+    case "NEEDS_HUMAN_DECISION":
+      return {
+        nextStep: "NEEDS_HUMAN_DECISION",
+        message: "Reviewer completed. Human decision required.",
+        reviewerVerdict: nextAction.reviewerVerdict,
+        canApprove: true
+      };
+    
+    case "NEEDS_APPLY_CONFIRMATION":
+      return {
+        nextStep: "NEEDS_APPLY_CONFIRMATION",
+        message: "Patch plan ready. Apply confirmation required.",
+        patchPlanPath: nextAction.patchPlanPath
+      };
+    
+    case "NEEDS_MANUAL_COMMIT":
+      return {
+        nextStep: "NEEDS_MANUAL_COMMIT",
+        message: "Patch applied to original repo. Manual commit required."
+      };
+    
+    case "COMPLETED":
+      return {
+        nextStep: "COMPLETED",
+        message: "Run is finalized."
+      };
+    
+    case "UNKNOWN_STATUS":
+      throw new ApiError(400, `Cannot determine next step for run status: ${run.status}`);
+    
+    default:
+      throw new ApiError(500, `Unhandled next action type: ${(nextAction as any).type}`);
+  }
+}
+
+interface NextStepAction {
+  type: "INVOKE_AGENT" | "RUN_ACTION" | "NEEDS_HUMAN_DECISION" | "NEEDS_APPLY_CONFIRMATION" | "NEEDS_MANUAL_COMMIT" | "COMPLETED" | "UNKNOWN_STATUS";
+  role?: AgentRole;
+  action?: string;
+  reviewerVerdict?: string;
+  patchPlanPath?: string;
+}
+
+async function determineNextAction(run: RunRecord, state: MaestroState, homeDir: string): Promise<NextStepAction> {
+  // Check for artifacts to determine intermediate states
+  const hasPromotionPatch = await fileExists(path.join(run.path, "17-promotion-patch.patch"));
+  const hasPromotionCheck = await fileExists(path.join(run.path, "19-promotion-check.md"));
+  const hasApplyPlan = await fileExists(path.join(run.path, "20-apply-plan.md"));
+  const hasApplyResult = await fileExists(path.join(run.path, "22-apply-result.md"));
+  const hasFinalCommit = await fileExists(path.join(run.path, "26-final-commit.md"));
+  
+  const decision = state.decisions.find(d => d.runId === run.id);
+  const reviewerInvocation = state.agentInvocations
+    .filter(inv => inv.runId === run.id && inv.role === "CODE_REVIEWER")
+    .sort(byAgentInvocationTimeDesc)[0];
+  
+  switch (run.status) {
+    case "PREPARED":
+      return { type: "INVOKE_AGENT", role: "CTO_SUPERVISOR" };
+    
+    case "SUPERVISOR_PLANNED":
+      return { type: "INVOKE_AGENT", role: "FULL_STACK_EXECUTOR" };
+    
+    case "EXECUTOR_REPORTED":
+      return { type: "INVOKE_AGENT", role: "CODE_REVIEWER" };
+    
+    case "REVIEWED":
+      if (!decision) {
+        // Check reviewer verdict from invocation output
+        let reviewerVerdict = "UNKNOWN";
+        if (reviewerInvocation?.outputPath) {
+          try {
+            const output = await fs.readFile(reviewerInvocation.outputPath, "utf8");
+            if (output.includes("APPROVED")) reviewerVerdict = "APPROVED";
+            else if (output.includes("NEEDS_CHANGES")) reviewerVerdict = "NEEDS_CHANGES";
+            else if (output.includes("REJECTED")) reviewerVerdict = "REJECTED";
+          } catch {}
+        }
+        return { type: "NEEDS_HUMAN_DECISION", reviewerVerdict };
+      }
+      
+      if (decision.status === "APPROVED") {
+        // Check if patch already exported
+        if (hasPromotionPatch) {
+          if (hasPromotionCheck) {
+            if (hasApplyPlan) {
+              return { type: "NEEDS_APPLY_CONFIRMATION", patchPlanPath: path.join(run.path, "20-apply-plan.md") };
+            }
+            return { type: "RUN_ACTION", action: "PATCH_PLAN" };
+          }
+          return { type: "RUN_ACTION", action: "PATCH_CHECK" };
+        }
+        return { type: "RUN_ACTION", action: "PATCH_EXPORT" };
+      }
+      
+      // NEEDS_CHANGES, REJECTED, or BLOCKED
+      return { type: "NEEDS_HUMAN_DECISION", reviewerVerdict: decision.status };
+    
+    case "FINALIZED":
+      return { type: "COMPLETED" };
+    
+    case "BLOCKED":
+      return { type: "NEEDS_HUMAN_DECISION", reviewerVerdict: "BLOCKED" };
+    
+    default:
+      return { type: "UNKNOWN_STATUS" };
   }
 }
 
