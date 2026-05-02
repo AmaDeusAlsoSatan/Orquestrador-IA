@@ -989,6 +989,36 @@ In `data/config/agent-model-map.json`:
 }
 ```
 
+### Runtime Agent Profiles
+
+**Important:** AgentInvocation uses the `AgentProfile` stored in Maestro state as the effective runtime configuration. The `agent-model-map.json` file may be used as a planning/local reference, but it does not override the runtime AgentProfile unless explicitly wired into the runtime.
+
+**To change the provider/model used by an agent at runtime, use:**
+
+```bash
+maestro agents update --agent cto-supervisor --provider openclaude_grouter --model "kiro/claude-sonnet-4.5"
+maestro agents update --agent full-stack-executor --provider openclaude_grouter --model "kiro/claude-sonnet-4.5"
+maestro agents update --agent code-reviewer --provider openclaude_grouter --model "kiro/claude-sonnet-4.5"
+```
+
+**To verify the effective runtime profile:**
+
+```bash
+maestro agents list
+maestro agents show --agent cto-supervisor
+maestro agents show --agent full-stack-executor
+maestro agents show --agent code-reviewer
+```
+
+**Configuration Precedence:**
+
+1. **AgentProfile (State)** - Used by AgentInvocation runtime ✅
+2. **agent-model-map.json** - Local reference only (not used by runtime) ⚠️
+
+**Storage:**
+
+Agent profiles are stored in Maestro's internal state (not version controlled). Changes made via `maestro agents update` persist automatically and take effect immediately for new invocations.
+
 ### Validated Chain
 
 The complete chain has been validated:

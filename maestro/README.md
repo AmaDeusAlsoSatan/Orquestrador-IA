@@ -1113,6 +1113,8 @@ corepack pnpm run maestro agents show --agent cto-supervisor
 corepack pnpm run maestro agents update --agent full-stack-executor --provider kiro_openclaude --model best-coding-free
 ```
 
+**Note:** Runtime agent providers are controlled by `maestro agents update`, not by `agent-model-map.json`. The agent-model-map file is for local reference only and does not affect AgentInvocation runtime behavior.
+
 Prepare an invocation for a run:
 
 ```bash
