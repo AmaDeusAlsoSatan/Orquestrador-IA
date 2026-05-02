@@ -108,7 +108,7 @@ export async function createRunWorkspacePatch(workspacePath: string, outPath: st
 }
 
 async function excludeWorkspaceMetadataFromGit(workspacePath: string): Promise<void> {
-  const line = ".maestro/workspace-metadata.json";
+  const line = ".maestro/";
   const excludePath = path.join(workspacePath, ".git", "info", "exclude");
 
   try {

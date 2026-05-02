@@ -441,12 +441,31 @@ async function processExecutorPatch(
       };
     }
     
-    // Capture workspace diff
-    await captureRunGitDiff(project, run);
+    // Verify patch was actually applied by checking workspace status
+    const workspaceStatus = await inspectRunWorkspace(workspacePath);
+    const hasChanges = workspaceStatus.changedFiles.length > 0 || workspaceStatus.untrackedFiles.length > 0;
+    if (!hasChanges) {
+      return {
+        invocation: {
+          ...invocation,
+          status: "FAILED",
+          errorMessage: "Patch applied but no changes detected in workspace (git status is clean)"
+        },
+        state: nextState,
+        patchArtifactPath
+      };
+    }
+    
+    // Capture workspace diff (not original repo)
+    await captureRunGitDiff(project, run, {
+      repoPath: workspacePath,
+      source: "WORKSPACE_SANDBOX"
+    });
     
     console.log(`Patch applied successfully to workspace`);
     console.log(`Patch artifact: ${patchArtifactPath}`);
     console.log(`Workspace: ${workspacePath}`);
+    console.log(`Files changed: ${workspaceStatus.changedFiles.length + workspaceStatus.untrackedFiles.length}`);
     
     return {
       invocation,
