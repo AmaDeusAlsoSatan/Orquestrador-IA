@@ -217,11 +217,11 @@ export function renderKiroExecutorPrompt(project: Project, supervisorPlan?: stri
 
 You are operating as the Full Stack Executor role in Maestro for ${project.name}.
 
-Your job is to report the implementation performed or the exact implementation steps requested by the run. Do not discuss your model identity, provider, transport, or runtime. Return the execution result now.
+**IMPORTANT: You do not edit files directly.** Your job is to produce a unified diff patch that implements the Supervisor plan.
+
+Do not discuss your model identity, provider, transport, or runtime.
 
 Follow the supervisor plan strictly. Do not make large architectural decisions on your own. If the work requires changing architecture, data contracts, product scope, or project conventions, stop and ask for review.
-
-Before changing many files, explain your execution plan.
 
 ## Approved Supervisor Plan
 
@@ -234,35 +234,59 @@ ${plan}
 - Preserve existing project conventions.
 - Do not add unrelated refactors.
 - Do not automate accounts, provider rotation, or provider limit bypassing.
+- **Generate a unified diff patch, not direct file edits.**
 
 ## Required Output Format
 
-Your response MUST include:
+Your response MUST include these sections in this exact order:
 
 \`\`\`markdown
 ## Implementação
-[Describe what was implemented]
+[Describe what the patch changes and why]
 
 ## Arquivos Alterados
-[List files changed]
+[List files that will be modified by the patch]
+
+## Patch
+\`\`\`diff
+diff --git a/path/to/file b/path/to/file
+index abc123..def456 100644
+--- a/path/to/file
++++ b/path/to/file
+@@ -1,3 +1,4 @@
+ existing line
++new line
+ existing line
+\`\`\`
 
 ## Validação
-[Tests or checks performed]
+[What should be checked after applying the patch]
 
 ## Resultado
-[Final result and status]
+PATCH_PROPOSED
 \`\`\`
+
+## Patch Generation Rules
+
+- Use standard unified diff format (git diff output)
+- Start each file change with \`diff --git a/path b/path\`
+- Use relative paths from repository root (e.g., \`docs/README.md\`, not \`/absolute/path/docs/README.md\`)
+- Include proper context lines (3 lines before and after changes)
+- Do not include prose or explanations inside the diff block
+- Only modify files requested by the Supervisor plan
+- The patch must be valid for \`git apply\`
 
 ## Final Report
 
-When finished, report:
+When finished, your output must contain:
 
-- Files changed.
-- Summary of changes.
-- Tests or checks run.
-- Pending work.
-- Questions.
-- Risks.
+- **## Implementação** section with implementation description
+- **## Arquivos Alterados** section with file list
+- **## Patch** section with valid unified diff in fenced code block
+- **## Validação** section with validation steps
+- **## Resultado** section with status \`PATCH_PROPOSED\`
+
+The patch will be validated and applied by Maestro in a sandbox workspace. The original repository remains untouched until review and approval.
 `;
 }
 

@@ -89,8 +89,9 @@ function validateSupervisorOutput(output: string): OutputContractResult {
  * Validate FULL_STACK_EXECUTOR output
  * 
  * Required elements:
- * - Implementation section (## Implementação or ## Execution)
- * - Completion signal: Files changed, Validation, Result, or Done
+ * - Implementation section (## Implementação or ## Implementation)
+ * - Patch section (## Patch) with unified diff
+ * - Result: PATCH_PROPOSED
  */
 function validateExecutorOutput(output: string): OutputContractResult {
   const lowerOutput = output.toLowerCase();
@@ -99,32 +100,52 @@ function validateExecutorOutput(output: string): OutputContractResult {
   const hasImplementation = 
     lowerOutput.includes("## implementação") ||
     lowerOutput.includes("## implementation") ||
-    lowerOutput.includes("## execution") ||
     lowerOutput.includes("## execução");
   
   if (!hasImplementation) {
     return {
       valid: false,
-      reason: "Missing implementation section (## Implementação or ## Execution)",
+      reason: "Missing implementation section (## Implementação or ## Implementation)",
       missingElements: ["Implementation section"]
     };
   }
   
-  // Check for completion signals
-  const completionSignals = {
-    filesChanged: lowerOutput.includes("arquivo") && (lowerOutput.includes("alterado") || lowerOutput.includes("modificado") || lowerOutput.includes("changed")),
-    validation: lowerOutput.includes("validação") || lowerOutput.includes("validation") || lowerOutput.includes("verificação"),
-    result: lowerOutput.includes("resultado") || lowerOutput.includes("result"),
-    done: lowerOutput.includes("concluído") || lowerOutput.includes("done") || lowerOutput.includes("completed")
-  };
+  // Check for patch section
+  const hasPatchSection = 
+    lowerOutput.includes("## patch");
   
-  const hasCompletionSignal = Object.values(completionSignals).some(signal => signal);
-  
-  if (!hasCompletionSignal) {
+  if (!hasPatchSection) {
     return {
       valid: false,
-      reason: "Missing completion signal (files changed, validation, result, or done)",
-      missingElements: ["Completion signal"]
+      reason: "Missing patch section (## Patch)",
+      missingElements: ["Patch section"]
+    };
+  }
+  
+  // Check for unified diff markers
+  const hasUnifiedDiff = 
+    output.includes("diff --git") ||
+    (output.includes("---") && output.includes("+++") && output.includes("@@"));
+  
+  if (!hasUnifiedDiff) {
+    return {
+      valid: false,
+      reason: "Missing unified diff patch (must contain 'diff --git' or unified diff markers)",
+      missingElements: ["Unified diff"]
+    };
+  }
+  
+  // Check for result
+  const hasResult = 
+    lowerOutput.includes("patch_proposed") ||
+    lowerOutput.includes("resultado") ||
+    lowerOutput.includes("result");
+  
+  if (!hasResult) {
+    return {
+      valid: false,
+      reason: "Missing result section (## Resultado with PATCH_PROPOSED)",
+      missingElements: ["Result section"]
     };
   }
   

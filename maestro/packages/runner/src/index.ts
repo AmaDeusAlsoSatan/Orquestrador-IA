@@ -1,4 +1,5 @@
 export * from "./git-inspector";
+export * from "./patch-applier";
 export * from "./patch-promotion";
 export * from "./workspace-manager";
 export * from "./validation-runner";
