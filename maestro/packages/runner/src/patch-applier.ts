@@ -244,10 +244,15 @@ function parsePatchOperations(patchContent: string): PatchOperation[] {
     if (line.startsWith("diff --git ")) {
       // Save previous file if any
       if (currentFile && currentType) {
+        // Add trailing newline if content exists (standard for text files)
+        const content = currentContent.length > 0 
+          ? currentContent.join("\n") + "\n"
+          : "";
+        
         operations.push({
           type: currentType,
           path: currentFile,
-          content: currentContent.join("\n")
+          content
         });
       }
       
@@ -290,10 +295,15 @@ function parsePatchOperations(patchContent: string): PatchOperation[] {
   
   // Save last file
   if (currentFile && currentType) {
+    // Add trailing newline if content exists (standard for text files)
+    const content = currentContent.length > 0 
+      ? currentContent.join("\n") + "\n"
+      : "";
+    
     operations.push({
       type: currentType,
       path: currentFile,
-      content: currentContent.join("\n")
+      content
     });
   }
   
