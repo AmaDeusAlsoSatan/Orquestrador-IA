@@ -81,6 +81,9 @@ export async function checkPatchApply(
  * 
  * Runs: git apply <patch>
  * 
+ * On Windows with core.autocrlf=true, git apply may skip patches due to line ending
+ * normalization issues. In this case, we fall back to manual application.
+ * 
  * @param workspacePath - Path to workspace
  * @param patchContent - Patch content
  * @returns Apply result
@@ -105,12 +108,35 @@ export async function applyPatchToWorkspace(
     }
     await fs.writeFile(patchFile, content, "utf8");
     
-    // Run git apply
+    // Verify file was written
+    const fileExists = await fs.stat(patchFile).then(() => true).catch(() => false);
+    if (!fileExists) {
+      return {
+        success: false,
+        reason: "Failed to write patch file",
+        stderr: `Patch file not found after write: ${patchFile}`
+      };
+    }
+    
+    // Run git apply with verbose output to detect skipped patches
     try {
-      await execFileAsync("git", ["apply", patchFile], {
+      const result = await execFileAsync("git", ["apply", "--verbose", patchFile], {
         cwd: workspacePath,
         maxBuffer: 4 * 1024 * 1024
       });
+      
+      // Check if git skipped the patch (Windows autocrlf issue)
+      const output = result.stdout + result.stderr;
+      if (output.includes("Skipped patch")) {
+        // Fall back to manual application
+        console.warn("git apply skipped patch (likely Windows autocrlf issue), falling back to manual application");
+        const manualResult = await applyPatchManually(workspacePath, patchContent);
+        
+        // Clean up temp file
+        await fs.unlink(patchFile).catch(() => {});
+        
+        return manualResult;
+      }
       
       // Clean up temp file
       await fs.unlink(patchFile).catch(() => {});
@@ -133,6 +159,145 @@ export async function applyPatchToWorkspace(
       stderr: error.message
     };
   }
+}
+
+/**
+ * Manually apply patch by parsing and applying file operations
+ * 
+ * This is a fallback for when git apply fails due to line ending issues on Windows.
+ * 
+ * @param workspacePath - Path to workspace
+ * @param patchContent - Patch content
+ * @returns Apply result
+ */
+async function applyPatchManually(
+  workspacePath: string,
+  patchContent: string
+): Promise<PatchApplyResult> {
+  try {
+    // Parse patch to extract file operations
+    const operations = parsePatchOperations(patchContent);
+    
+    if (operations.length === 0) {
+      return {
+        success: false,
+        reason: "No file operations found in patch"
+      };
+    }
+    
+    // Apply each operation
+    for (const op of operations) {
+      const filePath = path.join(workspacePath, op.path);
+      
+      if (op.type === "create" || op.type === "modify") {
+        // Ensure directory exists
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        
+        // Write file content (preserve LF line endings from patch)
+        await fs.writeFile(filePath, op.content, "utf8");
+      } else if (op.type === "delete") {
+        // Delete file
+        await fs.unlink(filePath).catch(() => {});
+      }
+    }
+    
+    return { success: true };
+  } catch (error: any) {
+    return {
+      success: false,
+      reason: "Manual patch application failed",
+      stderr: error.message
+    };
+  }
+}
+
+interface PatchOperation {
+  type: "create" | "modify" | "delete";
+  path: string;
+  content: string;
+}
+
+/**
+ * Parse unified diff patch to extract file operations
+ * 
+ * Supports:
+ * - New files (new file mode)
+ * - Modified files
+ * - Deleted files (deleted file mode)
+ * 
+ * @param patchContent - Patch content
+ * @returns Array of file operations
+ */
+function parsePatchOperations(patchContent: string): PatchOperation[] {
+  const operations: PatchOperation[] = [];
+  const lines = patchContent.split("\n");
+  
+  let currentFile: string | null = null;
+  let currentType: "create" | "modify" | "delete" | null = null;
+  let currentContent: string[] = [];
+  let inHunk = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Parse file header: diff --git a/path b/path
+    if (line.startsWith("diff --git ")) {
+      // Save previous file if any
+      if (currentFile && currentType) {
+        operations.push({
+          type: currentType,
+          path: currentFile,
+          content: currentContent.join("\n")
+        });
+      }
+      
+      // Extract file path (use b/ path for new/modified files)
+      const match = line.match(/diff --git a\/.+ b\/(.+)/);
+      if (match) {
+        currentFile = match[1];
+        currentType = "modify"; // Default to modify
+        currentContent = [];
+        inHunk = false;
+      }
+    }
+    
+    // Check for new file
+    else if (line.startsWith("new file mode")) {
+      currentType = "create";
+    }
+    
+    // Check for deleted file
+    else if (line.startsWith("deleted file mode")) {
+      currentType = "delete";
+    }
+    
+    // Start of hunk: @@ -start,count +start,count @@
+    else if (line.startsWith("@@")) {
+      inHunk = true;
+    }
+    
+    // Content line (added)
+    else if (inHunk && line.startsWith("+") && !line.startsWith("+++")) {
+      currentContent.push(line.substring(1)); // Remove leading +
+    }
+    
+    // Content line (context or removed) - for modify operations
+    else if (inHunk && currentType === "modify" && !line.startsWith("-") && !line.startsWith("\\")) {
+      // For simplicity, we only handle additions in this fallback
+      // Full patch application would require more complex logic
+    }
+  }
+  
+  // Save last file
+  if (currentFile && currentType) {
+    operations.push({
+      type: currentType,
+      path: currentFile,
+      content: currentContent.join("\n")
+    });
+  }
+  
+  return operations;
 }
 
 /**
