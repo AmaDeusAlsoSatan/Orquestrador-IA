@@ -35,7 +35,24 @@ export async function createRunWorkspace(options: CreateWorkspaceOptions): Promi
   // Check if workspace already exists
   const workspaceExists = await fs.stat(workspacePath).catch(() => undefined);
   if (workspaceExists) {
-    throw new Error(`Workspace path already exists: ${workspacePath}`);
+    // Workspace exists - check if it's valid and can be reused
+    const metadataPath = path.join(workspacePath, ".maestro", "workspace-metadata.json");
+    const metadataExists = await fs.stat(metadataPath).catch(() => undefined);
+    
+    if (metadataExists) {
+      // Valid workspace - read and return existing metadata
+      const metadataContent = await fs.readFile(metadataPath, "utf8");
+      const existingWorkspace = JSON.parse(metadataContent) as RunWorkspace;
+      
+      // Update timestamp
+      existingWorkspace.updatedAt = new Date().toISOString();
+      await fs.writeFile(metadataPath, `${JSON.stringify(existingWorkspace, null, 2)}\n`, "utf8");
+      
+      return existingWorkspace;
+    } else {
+      // Directory exists but no metadata - this is an error state
+      throw new Error(`Workspace path exists but is not a valid Maestro workspace (missing metadata): ${workspacePath}. Please remove the directory manually or use a different path.`);
+    }
   }
 
   // Create workspace parent directory

@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { AgentInvocation, AgentProfile, Project, RunRecord, RunWorkspace } from "@maestro/core";
 import { getAdapterForProvider, resolveStageForRole, type OpenClaudeAdapterConfig } from "./runtime";
+import { buildExecutorContextPack } from "./executor-context-pack.js";
 
 export interface PrepareAgentInvocationOptions {
   run: RunRecord;
@@ -31,7 +32,40 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
   }
 
   const stage = resolveStageForRole(profile.role);
-  const prompt = await readPromptForStage(run, stage);
+  let prompt = await readPromptForStage(run, stage);
+  
+  // Add Executor Context Pack for patch-based executor
+  if (stage === "EXECUTOR_IMPLEMENT" && workspace) {
+    try {
+      const contextPack = await buildExecutorContextPack({
+        project,
+        run,
+        workspacePath: workspace.workspacePath,
+        maxBytes: 80000
+      });
+      
+      // Append context pack to prompt
+      prompt = `${prompt}\n\n---\n\n${contextPack.markdown}`;
+      
+      // Save context pack metadata
+      const invocationId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${profile.id}`;
+      const invocationDir = path.join(run.path, "agents", invocationId);
+      await fs.mkdir(invocationDir, { recursive: true });
+      await fs.writeFile(
+        path.join(invocationDir, "01-context-pack-metadata.json"),
+        JSON.stringify({
+          filesIncluded: contextPack.filesIncluded,
+          totalBytes: contextPack.totalBytes,
+          truncated: contextPack.truncated
+        }, null, 2),
+        "utf8"
+      );
+    } catch (error) {
+      // If context pack fails, log but continue with original prompt
+      console.warn(`Failed to build executor context pack: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  
   const invocationId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${profile.id}`;
   const invocationDir = path.join(run.path, "agents", invocationId);
   const promptPath = path.join(invocationDir, "01-input-prompt.md");

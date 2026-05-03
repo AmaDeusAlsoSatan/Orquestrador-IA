@@ -1,4 +1,5 @@
 export * from "./adapters.js";
+export * from "./executor-context-pack.js";
 export * from "./executor-patch-flow.js";
 export * from "./invocations.js";
 export * from "./output-contracts.js";

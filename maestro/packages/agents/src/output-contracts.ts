@@ -96,6 +96,32 @@ function validateSupervisorOutput(output: string): OutputContractResult {
 function validateExecutorOutput(output: string): OutputContractResult {
   const lowerOutput = output.toLowerCase();
   
+  // Check for tool-mode attempts (executor trying to read files instead of using provided context)
+  const toolModePatterns = [
+    "let me read",
+    "i'll read",
+    "i will read",
+    "i need to inspect",
+    "i will check the files",
+    "let me check",
+    "vou ler",
+    "vou verificar",
+    "preciso ler",
+    "preciso verificar"
+  ];
+  
+  const hasToolModeAttempt = toolModePatterns.some(pattern => 
+    lowerOutput.includes(pattern)
+  );
+  
+  if (hasToolModeAttempt && output.length < 1000) {
+    return {
+      valid: false,
+      reason: "EXECUTOR_ATTEMPTED_TOOL_MODE: Patch-Based Executor must not request to read files. All required file context is provided in the Executor Context Pack. If context is insufficient, return BLOCKED with list of missing files.",
+      missingElements: ["Patch using provided context"]
+    };
+  }
+  
   // Check for implementation section
   const hasImplementation = 
     lowerOutput.includes("## implementação") ||
