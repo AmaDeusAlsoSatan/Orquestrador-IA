@@ -12,6 +12,7 @@ import type { AgentInvocation } from "@maestro/core";
 export type ExecutorFailureKind =
   | "TOOL_MODE_ATTEMPT"
   | "PATCH_FORMAT_INVALID"
+  | "PATCH_SAFETY_FAILED"
   | "PATCH_REPAIR_FAILED"
   | "PATCH_APPLY_CHECK_FAILED"
   | "PATCH_APPLIED_BUILD_FAILED"
@@ -77,6 +78,17 @@ export function classifyExecutorFailure(
       recoverable: true,
       recommendedStrategy: "FULL_FILE_REPLACEMENT",
       reason: "Unified diff is structurally invalid",
+      maxAttempts: 1
+    };
+  }
+  
+  // Patch safety validation failed
+  if (errorMessage.includes("Patch safety validation failed")) {
+    return {
+      kind: "PATCH_SAFETY_FAILED",
+      recoverable: true,
+      recommendedStrategy: "FULL_FILE_REPLACEMENT",
+      reason: "Patch contains suspicious content - full-file replacement allows validation",
       maxAttempts: 1
     };
   }

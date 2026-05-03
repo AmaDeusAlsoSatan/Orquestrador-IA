@@ -104,6 +104,14 @@ interface AgentInvocation {
   completedAt?: string;
   blockedReason?: string;
   errorMessage?: string;
+  recoveryMetadata?: {
+    recoverable: boolean;
+    failureKind: string;
+    recommendedRecovery: string;
+    attempt: number;
+    maxAttempts: number;
+    reason: string;
+  };
 }
 
 interface ActionLogEntry {
@@ -659,8 +667,10 @@ function renderFailedInvocations(detail: RunDetail): string {
     return "";
   }
   
-  // Check if any failed invocation is recoverable (we'll check metadata via file existence)
-  const hasRecoverableExecutor = failedInvocations.some((inv) => inv.role === "FULL_STACK_EXECUTOR");
+  // Check if any failed invocation has recoverable metadata
+  const hasRecoverableExecutor = failedInvocations.some((inv) => 
+    inv.recoveryMetadata?.recoverable === true
+  );
   
   return `
     <div class="card" style="background: var(--danger-soft, #fee); border: 1px solid var(--danger, #c33); box-shadow: none; margin-bottom: 1rem;">
@@ -688,18 +698,24 @@ function renderFailedInvocations(detail: RunDetail): string {
           }
         }
         
-        // Check if this is a recoverable executor failure
-        const isRecoverableExecutor = inv.role === "FULL_STACK_EXECUTOR" && repairAttempted;
+        // Use recovery metadata if available
+        const hasRecoveryMetadata = inv.recoveryMetadata !== undefined;
+        const isRecoverable = inv.recoveryMetadata?.recoverable === true;
         
         return `
         <div style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg); border-radius: 4px;">
           <p><strong>Agente:</strong> ${escapeHtml(inv.role)}</p>
           <p><strong>Invocation ID:</strong> <code>${escapeHtml(inv.id)}</code></p>
+          ${hasRecoveryMetadata ? `
+            <p><strong>Failure Kind:</strong> ${escapeHtml(inv.recoveryMetadata!.failureKind)}</p>
+            <p><strong>Recuperável:</strong> ${isRecoverable ? "✅ Sim" : "❌ Não"}</p>
+            ${isRecoverable ? `<p><strong>Estratégia Recomendada:</strong> ${escapeHtml(inv.recoveryMetadata!.recommendedRecovery)}</p>` : ""}
+            <p><strong>Tentativa:</strong> ${inv.recoveryMetadata!.attempt}/${inv.recoveryMetadata!.maxAttempts}</p>
+          ` : ""}
           ${repairAttempted ? `
             <p><strong>🔧 Patch Repair:</strong> Tentado (${repairAttempts} tentativa${repairAttempts !== "1" ? "s" : ""})</p>
             <p><strong>Resultado do Repair:</strong> ${repairResult}</p>
             ${repairReason ? `<p><strong>Motivo:</strong> ${repairReason}</p>` : ""}
-            ${isRecoverableExecutor ? `<p><strong>Estratégia Recomendada:</strong> Full-file replacement</p>` : ""}
           ` : ""}
           <p><strong>Erro:</strong> ${escapeHtml(errorMsg)}</p>
           <div class="button-row" style="margin-top: 0.5rem;">

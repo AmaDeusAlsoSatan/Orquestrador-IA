@@ -549,6 +549,10 @@ async function getRun(context: RequestContext, runId: string) {
   const validationRuns = state.validationRuns.filter((item) => item.runId === run.id).sort(byUpdatedAtDesc);
   const checklist = await buildRunChecklist(run, workspace, promotion, decision, validationRuns);
   const nextActions = await buildNextActions(run, workspace, promotion, decision);
+  
+  // Enrich invocations with recovery metadata
+  const invocations = state.agentInvocations.filter((item) => item.runId === run.id).sort(byAgentInvocationTimeDesc);
+  const enrichedInvocations = await enrichInvocationsWithRecoveryMetadata(invocations);
 
   return {
     run,
@@ -560,11 +564,47 @@ async function getRun(context: RequestContext, runId: string) {
     decision,
     validationRuns,
     agentProfiles: getRunAgentProfiles(state, project.id),
-    agentInvocations: state.agentInvocations.filter((item) => item.runId === run.id).sort(byAgentInvocationTimeDesc),
+    agentInvocations: enrichedInvocations,
     nextStep: nextActions[0]?.description || getNextRunStep(run),
     checklist,
     nextActions
   };
+}
+
+/**
+ * Enrich invocations with recovery metadata
+ */
+async function enrichInvocationsWithRecoveryMetadata(invocations: AgentInvocation[]): Promise<any[]> {
+  const { loadRecoveryMetadata } = await import("@maestro/agents");
+  
+  return Promise.all(invocations.map(async (inv) => {
+    if (inv.status !== "FAILED" || !inv.outputPath) {
+      return inv;
+    }
+    
+    try {
+      const invocationDir = path.dirname(inv.outputPath);
+      const recoveryMetadata = await loadRecoveryMetadata(invocationDir);
+      
+      if (recoveryMetadata) {
+        return {
+          ...inv,
+          recoveryMetadata: {
+            recoverable: recoveryMetadata.recoverable,
+            failureKind: recoveryMetadata.failureKind,
+            recommendedRecovery: recoveryMetadata.recommendedRecovery,
+            attempt: recoveryMetadata.attempt,
+            maxAttempts: recoveryMetadata.maxAttempts,
+            reason: recoveryMetadata.reason
+          }
+        };
+      }
+    } catch {
+      // Ignore errors loading metadata
+    }
+    
+    return inv;
+  }));
 }
 
 async function getRunAgentsRoute(context: RequestContext, runId: string) {
