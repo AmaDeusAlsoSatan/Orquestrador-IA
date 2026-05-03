@@ -18,6 +18,8 @@ import {
   savePatchArtifact
 } from "@maestro/runner";
 import { extractUnifiedDiffFromAgentOutput, validatePatchSafety } from "./patch-extractor.js";
+import { repairExecutorPatch, type RepairPatchOptions } from "./executor-patch-repair.js";
+import type { OpenClaudeAdapterConfig } from "./runtime.js";
 
 export interface ProcessExecutorPatchInput {
   homeDir: string;
@@ -27,6 +29,10 @@ export interface ProcessExecutorPatchInput {
   run: RunRecord;
   workspace: RunWorkspace | undefined;
   state: MaestroState;
+  openClaudeConfig?: OpenClaudeAdapterConfig;
+  contextPackMarkdown?: string;
+  originalPrompt?: string;
+  maxRepairAttempts?: number;
 }
 
 export interface ProcessExecutorPatchResult {
@@ -59,7 +65,19 @@ export interface ProcessExecutorPatchResult {
 export async function processExecutorPatchFlow(
   input: ProcessExecutorPatchInput
 ): Promise<ProcessExecutorPatchResult> {
-  const { homeDir, invocation, outputPath, project, run, workspace, state } = input;
+  const { 
+    homeDir, 
+    invocation, 
+    outputPath, 
+    project, 
+    run, 
+    workspace, 
+    state,
+    openClaudeConfig,
+    contextPackMarkdown,
+    originalPrompt,
+    maxRepairAttempts = 1
+  } = input;
 
   try {
     // Read agent output
@@ -118,6 +136,119 @@ export async function processExecutorPatchFlow(
     // Check if patch can be applied
     const checkResult = await checkPatchApply(workspacePath, patchResult.patch);
     if (!checkResult.success) {
+      // Save apply check error
+      const invocationDir = path.dirname(outputPath);
+      const applyCheckErrorPath = path.join(invocationDir, "04-apply-check-error.txt");
+      const errorContent = `${checkResult.reason}\n\n${checkResult.stderr || ""}`;
+      await fs.writeFile(applyCheckErrorPath, errorContent, "utf8");
+      
+      // Attempt patch repair if we have the necessary context
+      if (contextPackMarkdown && originalPrompt && maxRepairAttempts > 0) {
+        console.log(`[Executor Patch Flow] Patch check failed, attempting repair (max ${maxRepairAttempts} attempts)...`);
+        
+        const repairResult = await repairExecutorPatch({
+          invocation,
+          invocationDir,
+          originalPrompt,
+          contextPackMarkdown,
+          previousOutput: outputContent,
+          previousPatch: patchResult.patch,
+          applyCheckError: errorContent,
+          project,
+          run,
+          openClaudeConfig,
+          homeDir,
+          workspacePath,
+          maxAttempts: maxRepairAttempts
+        });
+        
+        if (repairResult.success && repairResult.repairedPatch) {
+          console.log(`[Executor Patch Flow] Patch repair succeeded after ${repairResult.attempts} attempt(s)`);
+          
+          // Validate repaired patch
+          const repairedCheckResult = await checkPatchApply(workspacePath, repairResult.repairedPatch);
+          
+          if (repairedCheckResult.success) {
+            // Save repair check result
+            const repairCheckPath = path.join(invocationDir, "07-repair-apply-check.md");
+            await fs.writeFile(repairCheckPath, "✅ Repaired patch applies cleanly", "utf8");
+            
+            // Use repaired patch for the rest of the flow
+            console.log("[Executor Patch Flow] Repaired patch validated, continuing with apply...");
+            
+            // Apply repaired patch
+            const applyResult = await applyPatchToWorkspace(workspacePath, repairResult.repairedPatch);
+            if (!applyResult.success) {
+              return {
+                invocation: {
+                  ...invocation,
+                  status: "FAILED",
+                  errorMessage: `Repaired patch apply failed: ${applyResult.reason}\n${applyResult.stderr || ""}`
+                },
+                state: nextState,
+                patchArtifactPath,
+                workspacePath
+              };
+            }
+            
+            // Continue with verification and diff capture
+            const workspaceStatus = await inspectRunWorkspace(workspacePath);
+            const hasChanges = workspaceStatus.changedFiles.length > 0 || workspaceStatus.untrackedFiles.length > 0;
+            if (!hasChanges) {
+              return {
+                invocation: {
+                  ...invocation,
+                  status: "FAILED",
+                  errorMessage: "Repaired patch applied but no changes detected in workspace (git status is clean)"
+                },
+                state: nextState,
+                patchArtifactPath,
+                workspacePath
+              };
+            }
+            
+            // Capture workspace diff
+            await captureRunGitDiff(project, run, {
+              repoPath: workspacePath,
+              source: "WORKSPACE_SANDBOX"
+            });
+            
+            const changedFilesCount = workspaceStatus.changedFiles.length + workspaceStatus.untrackedFiles.length;
+            const diffPath = path.join(run.path, "13-git-diff.md");
+            
+            return {
+              invocation,
+              state: nextState,
+              patchArtifactPath,
+              workspacePath,
+              changedFilesCount,
+              diffPath
+            };
+          } else {
+            // Repaired patch still doesn't apply
+            const repairCheckPath = path.join(invocationDir, "07-repair-apply-check.md");
+            await fs.writeFile(
+              repairCheckPath, 
+              `❌ Repaired patch still fails:\n\n${repairedCheckResult.reason}\n\n${repairedCheckResult.stderr || ""}`,
+              "utf8"
+            );
+          }
+        }
+        
+        // Repair failed or repaired patch still doesn't apply
+        return {
+          invocation: {
+            ...invocation,
+            status: "FAILED",
+            errorMessage: `Patch repair failed after ${repairResult.attempts} attempt(s): ${repairResult.finalError || "Repaired patch still does not apply"}`
+          },
+          state: nextState,
+          patchArtifactPath,
+          workspacePath
+        };
+      }
+      
+      // No repair attempted (missing context or maxRepairAttempts = 0)
       return {
         invocation: {
           ...invocation,

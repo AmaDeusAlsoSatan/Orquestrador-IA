@@ -518,7 +518,11 @@ async function invokeAgentCommand(homeDir: string, args: string[]): Promise<void
         project,
         run,
         workspace,
-        state: nextState
+        state: nextState,
+        openClaudeConfig: await readOpenClaudeRuntimeConfig(homeDir),
+        contextPackMarkdown: result.contextPackMarkdown,
+        originalPrompt: result.originalPrompt,
+        maxRepairAttempts: 1
       });
       
       nextState = upsertAgentInvocation(patchResult.state, patchResult.invocation);

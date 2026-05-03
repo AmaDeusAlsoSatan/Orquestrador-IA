@@ -18,6 +18,8 @@ export interface PrepareAgentInvocationResult {
   invocationDir: string;
   promptPath: string;
   outputPath: string;
+  contextPackMarkdown?: string;
+  originalPrompt?: string;
 }
 
 export interface AttachAgentInvocationOutputResult {
@@ -40,6 +42,8 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
   const outputPath = path.join(invocationDir, "02-output.md");
   
   let prompt = await readPromptForStage(run, stage);
+  const originalPrompt = prompt; // Capture original prompt before modifications
+  let contextPackMarkdown: string | undefined;
   
   // Add Executor Context Pack for patch-based executor
   if (stage === "EXECUTOR_IMPLEMENT" && workspace) {
@@ -50,6 +54,9 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
         workspacePath: workspace.workspacePath,
         maxBytes: 80000
       });
+      
+      // Capture context pack markdown for potential repair
+      contextPackMarkdown = contextPack.markdown;
       
       // Append context pack to prompt
       prompt = `${prompt}\n\n---\n\n${contextPack.markdown}`;
@@ -148,7 +155,9 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
     invocation,
     invocationDir,
     promptPath,
-    outputPath
+    outputPath,
+    contextPackMarkdown,
+    originalPrompt
   };
 }
 

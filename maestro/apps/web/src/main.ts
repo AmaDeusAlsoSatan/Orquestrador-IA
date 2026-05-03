@@ -662,17 +662,30 @@ function renderFailedInvocations(detail: RunDetail): string {
   return `
     <div class="card" style="background: var(--danger-soft, #fee); border: 1px solid var(--danger, #c33); box-shadow: none; margin-bottom: 1rem;">
       <h3>⚠️ Invocações Falhadas</h3>
-      ${failedInvocations.map((inv) => `
+      ${failedInvocations.map((inv) => {
+        // Check if error message indicates repair was attempted
+        const errorMsg = inv.errorMessage || "Erro desconhecido";
+        const repairAttempted = errorMsg.includes("Patch repair failed") || errorMsg.includes("repair");
+        const repairMatch = errorMsg.match(/after (\d+) attempt/);
+        const repairAttempts = repairMatch ? repairMatch[1] : "unknown";
+        
+        return `
         <div style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg); border-radius: 4px;">
           <p><strong>Agente:</strong> ${escapeHtml(inv.role)}</p>
           <p><strong>Invocation ID:</strong> <code>${escapeHtml(inv.id)}</code></p>
-          <p><strong>Erro:</strong> ${escapeHtml(inv.errorMessage || "Erro desconhecido")}</p>
+          ${repairAttempted ? `<p><strong>🔧 Patch Repair:</strong> Tentado (${repairAttempts} tentativa${repairAttempts !== "1" ? "s" : ""})</p>` : ""}
+          <p><strong>Erro:</strong> ${escapeHtml(errorMsg)}</p>
           <div class="button-row" style="margin-top: 0.5rem;">
             ${fileButton(`agents/${inv.id}/02-output.md`, "Ver output do agente")}
             ${fileButton(`agents/${inv.id}/03-proposed.patch`, "Ver patch proposto")}
+            ${repairAttempted ? fileButton(`agents/${inv.id}/04-apply-check-error.txt`, "Ver erro do git apply") : ""}
+            ${repairAttempted ? fileButton(`agents/${inv.id}/05-repair-prompt.md`, "Ver prompt de repair") : ""}
+            ${repairAttempted ? fileButton(`agents/${inv.id}/06-repaired.patch`, "Ver patch reparado") : ""}
+            ${repairAttempted ? fileButton(`agents/${inv.id}/07-repair-apply-check.md`, "Ver resultado do repair") : ""}
           </div>
         </div>
-      `).join("")}
+      `;
+      }).join("")}
       <p class="muted" style="margin-top: 0.5rem;">
         <strong>Sugestão:</strong> Revise o output do agente e o patch gerado. 
         Se o patch está truncado ou malformado, considere criar uma run com escopo menor.

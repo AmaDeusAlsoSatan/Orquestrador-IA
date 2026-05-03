@@ -614,7 +614,11 @@ async function invokeRunAgentRoute(context: RequestContext, runId: string) {
         project,
         run,
         workspace,
-        state: nextState
+        state: nextState,
+        openClaudeConfig: await readOpenClaudeRuntimeConfig(context.homeDir),
+        contextPackMarkdown: result.contextPackMarkdown,
+        originalPrompt: result.originalPrompt,
+        maxRepairAttempts: 1
       });
       
       // Update invocation and state with patch processing result
