@@ -833,6 +833,15 @@ async function executeNextStepAction(context: RequestContext, runId: string): Pr
   
   switch (nextAction.type) {
     case "INVOKE_AGENT":
+      // For FULL_STACK_EXECUTOR, ensure workspace exists before invocation
+      if (nextAction.role === "FULL_STACK_EXECUTOR") {
+        const workspace = state.workspaces.find((item) => item.runId === run.id);
+        if (!workspace) {
+          // Create workspace automatically before invoking executor
+          await createWorkspaceAction(context, runId, false);
+        }
+      }
+      
       // Invoke the specified agent role
       const invokeContext = {
         ...context,
