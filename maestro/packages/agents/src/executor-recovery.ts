@@ -13,6 +13,7 @@ export type ExecutorFailureKind =
   | "TOOL_MODE_ATTEMPT"
   | "PATCH_FORMAT_INVALID"
   | "PATCH_SAFETY_FAILED"
+  | "PATCH_EXTRACTION_INCOMPLETE"
   | "PATCH_REPAIR_FAILED"
   | "PATCH_APPLY_CHECK_FAILED"
   | "PATCH_APPLIED_BUILD_FAILED"
@@ -96,6 +97,17 @@ export function classifyExecutorFailure(
       recoverable: true,
       recommendedStrategy: "FULL_FILE_REPLACEMENT",
       reason: "Patch contains suspicious content - full-file replacement allows validation",
+      maxAttempts: 1
+    };
+  }
+  
+  // Patch extraction incomplete (multiple files listed but not all extracted)
+  if (errorMessage.includes("Patch extraction incomplete")) {
+    return {
+      kind: "PATCH_EXTRACTION_INCOMPLETE",
+      recoverable: true,
+      recommendedStrategy: "FULL_FILE_REPLACEMENT",
+      reason: "Executor listed multiple files but patch extractor only captured some",
       maxAttempts: 1
     };
   }

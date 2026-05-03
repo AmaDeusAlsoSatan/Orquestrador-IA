@@ -155,6 +155,23 @@ export async function processExecutorPatchFlow(
       };
     }
     
+    // Validate patch completeness (check if all listed files are in patch)
+    const { validatePatchCompleteness } = await import("./patch-extractor.js");
+    const completenessCheck = validatePatchCompleteness(outputContent, patchResult.patch);
+    
+    if (!completenessCheck.complete) {
+      const missingFilesList = completenessCheck.missingFiles.join(", ");
+      return {
+        invocation: await createFailedInvocationWithRecovery(
+          invocation,
+          `Patch extraction incomplete: Executor listed ${completenessCheck.filesListed.length} files but patch only contains ${completenessCheck.filesInPatch.length}. Missing: ${missingFilesList}`,
+          outputPath,
+          run
+        ),
+        state
+      };
+    }
+    
     // Validate patch safety
     const safetyCheck = validatePatchSafety(patchResult.patch);
     if (!safetyCheck.safe) {
@@ -172,6 +189,16 @@ export async function processExecutorPatchFlow(
     // Save patch artifact
     const patchArtifactPath = path.join(path.dirname(outputPath), "03-proposed.patch");
     await savePatchArtifact(patchArtifactPath, patchResult.patch);
+    
+    // Save patch metadata
+    const patchMetadataPath = path.join(path.dirname(outputPath), "03-proposed-patch-metadata.json");
+    await fs.writeFile(patchMetadataPath, JSON.stringify({
+      diffBlockCount: patchResult.metadata?.diffBlockCount || 0,
+      filesInPatch: patchResult.metadata?.filesInPatch || [],
+      filesListedByExecutor: completenessCheck.filesListed,
+      extractionMethod: patchResult.metadata?.extractionMethod || "unknown",
+      complete: completenessCheck.complete
+    }, null, 2), "utf8");
     
     // Ensure workspace exists
     let workspacePath: string;
