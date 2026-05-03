@@ -20,6 +20,7 @@ import {
 import { extractUnifiedDiffFromAgentOutput, validatePatchSafety } from "./patch-extractor.js";
 import { repairExecutorPatch, type RepairPatchOptions } from "./executor-patch-repair.js";
 import type { OpenClaudeAdapterConfig } from "./runtime.js";
+import { classifyExecutorFailure, saveRecoveryMetadata } from "./executor-recovery.js";
 
 export interface ProcessExecutorPatchInput {
   homeDir: string;
@@ -43,6 +44,45 @@ export interface ProcessExecutorPatchResult {
   changedFilesCount?: number;
   diffPath?: string;
 }
+
+/**
+ * Helper to create failed invocation with recovery metadata
+ */
+async function createFailedInvocationWithRecovery(
+  invocation: AgentInvocation,
+  errorMessage: string,
+  outputPath: string,
+  run: RunRecord
+): Promise<AgentInvocation> {
+  const failedInvocation: AgentInvocation = {
+    ...invocation,
+    status: "FAILED",
+    errorMessage
+  };
+  
+  // Classify failure and save recovery metadata
+  const classification = classifyExecutorFailure(failedInvocation);
+  
+  if (classification.recoverable) {
+    const invocationDir = path.dirname(outputPath);
+    const previousAttempts = await countRecoveryAttempts(run.path, invocation.role);
+    
+    await saveRecoveryMetadata(invocationDir, {
+      failureKind: classification.kind,
+      recoverable: true,
+      recommendedRecovery: classification.recommendedStrategy,
+      attempt: previousAttempts + 1,
+      maxAttempts: classification.maxAttempts,
+      previousInvocationId: invocation.id,
+      reason: classification.reason
+    });
+  }
+  
+  return failedInvocation;
+}
+
+// Import countRecoveryAttempts
+import { countRecoveryAttempts } from "./executor-recovery.js";
 
 /**
  * Process Executor patch: extract, validate, and apply to workspace
@@ -88,11 +128,12 @@ export async function processExecutorPatchFlow(
     
     if (!patchResult.patch) {
       return {
-        invocation: {
-          ...invocation,
-          status: "FAILED",
-          errorMessage: `Patch extraction failed: ${patchResult.reason || "No unified diff found in output"}`
-        },
+        invocation: await createFailedInvocationWithRecovery(
+          invocation,
+          `Patch extraction failed: ${patchResult.reason || "No unified diff found in output"}`,
+          outputPath,
+          run
+        ),
         state
       };
     }
