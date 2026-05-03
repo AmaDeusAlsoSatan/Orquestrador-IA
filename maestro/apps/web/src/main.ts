@@ -677,6 +677,7 @@ function renderFailedInvocations(detail: RunDetail): string {
   // Check if any failed invocation has recoverable metadata with available attempts
   const hasRecoverableExecutor = failedInvocations.some((inv) => 
     inv.recoveryMetadata?.recoverable === true &&
+    inv.recoveryMetadata.runRecovery &&
     inv.recoveryMetadata.runRecovery.attempt < inv.recoveryMetadata.runRecovery.maxAttempts
   );
   
@@ -719,7 +720,7 @@ function renderFailedInvocations(detail: RunDetail): string {
             <p><strong>Recuperável:</strong> ${isRecoverable ? "✅ Sim" : "❌ Não"}</p>
             ${isRecoverable ? `<p><strong>Estratégia Recomendada:</strong> ${escapeHtml(inv.recoveryMetadata!.recommendedRecovery)}</p>` : ""}
             ${inv.recoveryMetadata!.patchRepair ? `<p><strong>Patch Repair:</strong> ${inv.recoveryMetadata!.patchRepair.attempt}/${inv.recoveryMetadata!.patchRepair.maxAttempts} ${inv.recoveryMetadata!.patchRepair.result}</p>` : ""}
-            <p><strong>Run Recovery:</strong> ${inv.recoveryMetadata!.runRecovery.attempt}/${inv.recoveryMetadata!.runRecovery.maxAttempts} ${inv.recoveryMetadata!.runRecovery.attempt < inv.recoveryMetadata!.runRecovery.maxAttempts ? "available" : "exhausted"}</p>
+            ${inv.recoveryMetadata!.runRecovery ? `<p><strong>Run Recovery:</strong> ${inv.recoveryMetadata!.runRecovery.attempt}/${inv.recoveryMetadata!.runRecovery.maxAttempts} ${inv.recoveryMetadata!.runRecovery.attempt < inv.recoveryMetadata!.runRecovery.maxAttempts ? "available" : "exhausted"}</p>` : ""}
           ` : ""}
           ${repairAttempted ? `
             <p><strong>🔧 Patch Repair:</strong> Tentado (${repairAttempts} tentativa${repairAttempts !== "1" ? "s" : ""})</p>
