@@ -669,17 +669,38 @@ function renderFailedInvocations(detail: RunDetail): string {
         const repairMatch = errorMsg.match(/after (\d+) attempt/);
         const repairAttempts = repairMatch ? repairMatch[1] : "unknown";
         
+        // Determine repair result
+        let repairResult = "unknown";
+        let repairReason = "";
+        if (repairAttempted) {
+          if (errorMsg.includes("PATCH_REPAIR_OUTPUT_INVALID")) {
+            repairResult = "failed";
+            repairReason = "Output inválido (sem patch válido)";
+          } else if (errorMsg.includes("PATCH_REPAIR_APPLY_CHECK_FAILED") || errorMsg.includes("still does not apply")) {
+            repairResult = "failed";
+            repairReason = "Patch reparado ainda não aplica";
+          } else {
+            repairResult = "failed";
+            repairReason = "Erro desconhecido";
+          }
+        }
+        
         return `
         <div style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg); border-radius: 4px;">
           <p><strong>Agente:</strong> ${escapeHtml(inv.role)}</p>
           <p><strong>Invocation ID:</strong> <code>${escapeHtml(inv.id)}</code></p>
-          ${repairAttempted ? `<p><strong>🔧 Patch Repair:</strong> Tentado (${repairAttempts} tentativa${repairAttempts !== "1" ? "s" : ""})</p>` : ""}
+          ${repairAttempted ? `
+            <p><strong>🔧 Patch Repair:</strong> Tentado (${repairAttempts} tentativa${repairAttempts !== "1" ? "s" : ""})</p>
+            <p><strong>Resultado do Repair:</strong> ${repairResult}</p>
+            ${repairReason ? `<p><strong>Motivo:</strong> ${repairReason}</p>` : ""}
+          ` : ""}
           <p><strong>Erro:</strong> ${escapeHtml(errorMsg)}</p>
           <div class="button-row" style="margin-top: 0.5rem;">
             ${fileButton(`agents/${inv.id}/02-output.md`, "Ver output do agente")}
             ${fileButton(`agents/${inv.id}/03-proposed.patch`, "Ver patch proposto")}
             ${repairAttempted ? fileButton(`agents/${inv.id}/04-apply-check-error.txt`, "Ver erro do git apply") : ""}
             ${repairAttempted ? fileButton(`agents/${inv.id}/05-repair-prompt.md`, "Ver prompt de repair") : ""}
+            ${repairAttempted ? fileButton(`agents/${inv.id}/05-repair-output.md`, "Ver output bruto do repair") : ""}
             ${repairAttempted ? fileButton(`agents/${inv.id}/06-repaired.patch`, "Ver patch reparado") : ""}
             ${repairAttempted ? fileButton(`agents/${inv.id}/07-repair-apply-check.md`, "Ver resultado do repair") : ""}
           </div>

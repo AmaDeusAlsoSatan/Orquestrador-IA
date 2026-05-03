@@ -113,7 +113,18 @@ export async function repairExecutorPatch(
       const repairedPatch = extractPatchFromOutput(result.outputText);
       
       if (!repairedPatch) {
-        currentError = "No valid patch found in repair output";
+        currentError = "PATCH_REPAIR_OUTPUT_INVALID: repair response did not contain a valid unified diff";
+        
+        // Save repair output for debugging
+        const repairOutputPath = path.join(invocationDir, `0${5 + (attempts - 1) * 3}-repair-output.md`);
+        await fs.writeFile(repairOutputPath, result.outputText, "utf8");
+        
+        continue;
+      }
+      
+      // Validate patch structure
+      if (!repairedPatch.includes("diff --git")) {
+        currentError = "PATCH_REPAIR_OUTPUT_INVALID: extracted patch does not contain 'diff --git' header";
         
         // Save repair output for debugging
         const repairOutputPath = path.join(invocationDir, `0${5 + (attempts - 1) * 3}-repair-output.md`);

@@ -307,14 +307,20 @@ export async function invokeOpenClaude(
         };
       }
 
-      // Validate output contract
-      const validation = validateAgentOutput(input.role, output);
-      if (!validation.valid) {
-        return {
-          status: "FAILED",
-          errorMessage: `Output contract validation failed: ${validation.reason}`,
-          outputText: output // Save raw output for debugging
-        };
+      // Skip output contract validation for repair mode
+      // Repair mode only needs to return a valid patch, not a full report
+      const isRepairMode = input.metadata?.repairAttempt !== undefined;
+      
+      if (!isRepairMode) {
+        // Validate output contract for normal invocations
+        const validation = validateAgentOutput(input.role, output);
+        if (!validation.valid) {
+          return {
+            status: "FAILED",
+            errorMessage: `Output contract validation failed: ${validation.reason}`,
+            outputText: output // Save raw output for debugging
+          };
+        }
       }
 
       return {
