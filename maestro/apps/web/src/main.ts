@@ -659,6 +659,9 @@ function renderFailedInvocations(detail: RunDetail): string {
     return "";
   }
   
+  // Check if any failed invocation is recoverable (we'll check metadata via file existence)
+  const hasRecoverableExecutor = failedInvocations.some((inv) => inv.role === "FULL_STACK_EXECUTOR");
+  
   return `
     <div class="card" style="background: var(--danger-soft, #fee); border: 1px solid var(--danger, #c33); box-shadow: none; margin-bottom: 1rem;">
       <h3>⚠️ Invocações Falhadas</h3>
@@ -685,6 +688,9 @@ function renderFailedInvocations(detail: RunDetail): string {
           }
         }
         
+        // Check if this is a recoverable executor failure
+        const isRecoverableExecutor = inv.role === "FULL_STACK_EXECUTOR" && repairAttempted;
+        
         return `
         <div style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg); border-radius: 4px;">
           <p><strong>Agente:</strong> ${escapeHtml(inv.role)}</p>
@@ -693,6 +699,7 @@ function renderFailedInvocations(detail: RunDetail): string {
             <p><strong>🔧 Patch Repair:</strong> Tentado (${repairAttempts} tentativa${repairAttempts !== "1" ? "s" : ""})</p>
             <p><strong>Resultado do Repair:</strong> ${repairResult}</p>
             ${repairReason ? `<p><strong>Motivo:</strong> ${repairReason}</p>` : ""}
+            ${isRecoverableExecutor ? `<p><strong>Estratégia Recomendada:</strong> Full-file replacement</p>` : ""}
           ` : ""}
           <p><strong>Erro:</strong> ${escapeHtml(errorMsg)}</p>
           <div class="button-row" style="margin-top: 0.5rem;">
@@ -707,6 +714,15 @@ function renderFailedInvocations(detail: RunDetail): string {
         </div>
       `;
       }).join("")}
+      ${hasRecoverableExecutor ? `
+        <div style="margin-top: 1rem; padding: 0.75rem; background: var(--bg); border-radius: 4px; border: 1px solid var(--primary, #36f);">
+          <p><strong>🔧 Recuperação Automática Disponível</strong></p>
+          <p class="muted">O Maestro pode tentar recuperar automaticamente usando full-file replacement (gera diff localmente).</p>
+          <button class="primary" data-run-action="RECOVER_EXECUTOR" ${state.busy ? "disabled" : ""}>
+            ${state.busy ? "⏳ Tentando recuperação..." : "🔧 Tentar Recuperação Automática"}
+          </button>
+        </div>
+      ` : ""}
       <p class="muted" style="margin-top: 0.5rem;">
         <strong>Sugestão:</strong> Revise o output do agente e o patch gerado. 
         Se o patch está truncado ou malformado, considere criar uma run com escopo menor.
