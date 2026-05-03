@@ -142,11 +142,12 @@ export async function processExecutorPatchFlow(
     const safetyCheck = validatePatchSafety(patchResult.patch);
     if (!safetyCheck.safe) {
       return {
-        invocation: {
-          ...invocation,
-          status: "FAILED",
-          errorMessage: `Patch safety validation failed: ${safetyCheck.reason}`
-        },
+        invocation: await createFailedInvocationWithRecovery(
+          invocation,
+          `Patch safety validation failed: ${safetyCheck.reason}`,
+          outputPath,
+          run
+        ),
         state
       };
     }
@@ -221,11 +222,12 @@ export async function processExecutorPatchFlow(
             const applyResult = await applyPatchToWorkspace(workspacePath, repairResult.repairedPatch);
             if (!applyResult.success) {
               return {
-                invocation: {
-                  ...invocation,
-                  status: "FAILED",
-                  errorMessage: `Repaired patch apply failed: ${applyResult.reason}\n${applyResult.stderr || ""}`
-                },
+                invocation: await createFailedInvocationWithRecovery(
+                  invocation,
+                  `Repaired patch apply failed: ${applyResult.reason}\n${applyResult.stderr || ""}`,
+                  outputPath,
+                  run
+                ),
                 state: nextState,
                 patchArtifactPath,
                 workspacePath
@@ -237,11 +239,12 @@ export async function processExecutorPatchFlow(
             const hasChanges = workspaceStatus.changedFiles.length > 0 || workspaceStatus.untrackedFiles.length > 0;
             if (!hasChanges) {
               return {
-                invocation: {
-                  ...invocation,
-                  status: "FAILED",
-                  errorMessage: "Repaired patch applied but no changes detected in workspace (git status is clean)"
-                },
+                invocation: await createFailedInvocationWithRecovery(
+                  invocation,
+                  "Repaired patch applied but no changes detected in workspace (git status is clean)",
+                  outputPath,
+                  run
+                ),
                 state: nextState,
                 patchArtifactPath,
                 workspacePath
@@ -278,11 +281,12 @@ export async function processExecutorPatchFlow(
         
         // Repair failed or repaired patch still doesn't apply
         return {
-          invocation: {
-            ...invocation,
-            status: "FAILED",
-            errorMessage: `Patch repair failed after ${repairResult.attempts} attempt(s): ${repairResult.finalError || "Repaired patch still does not apply"}`
-          },
+          invocation: await createFailedInvocationWithRecovery(
+            invocation,
+            `Patch repair failed after ${repairResult.attempts} attempt(s): ${repairResult.finalError || "Repaired patch still does not apply"}`,
+            outputPath,
+            run
+          ),
           state: nextState,
           patchArtifactPath,
           workspacePath
@@ -291,11 +295,12 @@ export async function processExecutorPatchFlow(
       
       // No repair attempted (missing context or maxRepairAttempts = 0)
       return {
-        invocation: {
-          ...invocation,
-          status: "FAILED",
-          errorMessage: `Patch apply check failed: ${checkResult.reason}\n${checkResult.stderr || ""}`
-        },
+        invocation: await createFailedInvocationWithRecovery(
+          invocation,
+          `Patch apply check failed: ${checkResult.reason}\n${checkResult.stderr || ""}`,
+          outputPath,
+          run
+        ),
         state: nextState,
         patchArtifactPath,
         workspacePath
@@ -306,11 +311,12 @@ export async function processExecutorPatchFlow(
     const applyResult = await applyPatchToWorkspace(workspacePath, patchResult.patch);
     if (!applyResult.success) {
       return {
-        invocation: {
-          ...invocation,
-          status: "FAILED",
-          errorMessage: `Patch apply failed: ${applyResult.reason}\n${applyResult.stderr || ""}`
-        },
+        invocation: await createFailedInvocationWithRecovery(
+          invocation,
+          `Patch apply failed: ${applyResult.reason}\n${applyResult.stderr || ""}`,
+          outputPath,
+          run
+        ),
         state: nextState,
         patchArtifactPath,
         workspacePath
@@ -322,11 +328,12 @@ export async function processExecutorPatchFlow(
     const hasChanges = workspaceStatus.changedFiles.length > 0 || workspaceStatus.untrackedFiles.length > 0;
     if (!hasChanges) {
       return {
-        invocation: {
-          ...invocation,
-          status: "FAILED",
-          errorMessage: "Patch applied but no changes detected in workspace (git status is clean)"
-        },
+        invocation: await createFailedInvocationWithRecovery(
+          invocation,
+          "Patch applied but no changes detected in workspace (git status is clean)",
+          outputPath,
+          run
+        ),
         state: nextState,
         patchArtifactPath,
         workspacePath
@@ -352,11 +359,12 @@ export async function processExecutorPatchFlow(
     };
   } catch (error) {
     return {
-      invocation: {
-        ...invocation,
-        status: "FAILED",
-        errorMessage: `Patch processing error: ${error instanceof Error ? error.message : String(error)}`
-      },
+      invocation: await createFailedInvocationWithRecovery(
+        invocation,
+        `Patch processing error: ${error instanceof Error ? error.message : String(error)}`,
+        outputPath,
+        run
+      ),
       state
     };
   }

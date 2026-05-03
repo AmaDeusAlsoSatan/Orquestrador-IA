@@ -798,6 +798,8 @@ async function runControlledAction(context: RequestContext, runId: string): Prom
   switch (action) {
     case "NEXT_STEP":
       return executeNextStepAction(context, runId);
+    case "RECOVER_EXECUTOR":
+      return recoverExecutorAction(context, runId);
     case "CREATE_WORKSPACE":
       return createWorkspaceAction(context, runId, Boolean(body.force));
     case "GENERATE_HANDOFF":
@@ -825,6 +827,285 @@ async function runControlledAction(context: RequestContext, runId: string): Prom
     default:
       throw new ApiError(400, `Unsupported run action: ${action}`);
   }
+}
+
+async function recoverExecutorAction(context: RequestContext, runId: string): Promise<unknown> {
+  const { state } = await loadState(context.homeDir);
+  const run = getRunOrThrow(state, runId);
+  const project = getProjectOrThrow(state, run.projectId);
+  
+  // Find last failed FULL_STACK_EXECUTOR invocation
+  const failedInvocations = state.agentInvocations
+    .filter((inv: AgentInvocation) => inv.runId === runId && inv.role === "FULL_STACK_EXECUTOR" && inv.status === "FAILED")
+    .sort((a: AgentInvocation, b: AgentInvocation) => (b.startedAt || "").localeCompare(a.startedAt || ""));
+  
+  if (failedInvocations.length === 0) {
+    throw new ApiError(400, "No failed FULL_STACK_EXECUTOR invocation found for this run");
+  }
+  
+  const lastFailedInvocation = failedInvocations[0];
+  
+  if (!lastFailedInvocation.outputPath) {
+    throw new ApiError(400, "Failed invocation has no output path");
+  }
+  
+  // Load recovery metadata
+  const { loadRecoveryMetadata, countRecoveryAttempts } = await import("@maestro/agents");
+  const invocationDir = path.dirname(lastFailedInvocation.outputPath);
+  const recoveryMetadata = await loadRecoveryMetadata(invocationDir);
+  
+  if (!recoveryMetadata) {
+    throw new ApiError(400, "No recovery metadata found for failed invocation");
+  }
+  
+  if (!recoveryMetadata.recoverable) {
+    throw new ApiError(400, `Failure is not recoverable: ${recoveryMetadata.reason}`);
+  }
+  
+  // Check if max attempts reached
+  const currentAttempts = await countRecoveryAttempts(run.path, "FULL_STACK_EXECUTOR");
+  if (currentAttempts >= recoveryMetadata.maxAttempts) {
+    throw new ApiError(400, `Maximum recovery attempts (${recoveryMetadata.maxAttempts}) reached`);
+  }
+  
+  // Get workspace
+  const workspace = state.workspaces.find((item) => item.runId === run.id);
+  if (!workspace) {
+    throw new ApiError(400, "Workspace not found. Cannot recover without workspace.");
+  }
+  
+  // Prepare recovery invocation based on strategy
+  const { buildFullFileReplacementPrompt, extractFileReplacements, applyFileReplacementsAndGenerateDiff } = await import("@maestro/agents");
+  
+  let recoveryPrompt: string;
+  
+  if (recoveryMetadata.recommendedRecovery === "FULL_FILE_REPLACEMENT") {
+    // Load previous artifacts
+    const previousOutput = await fs.readFile(lastFailedInvocation.outputPath, "utf8");
+    const previousPatch = await fs.readFile(path.join(invocationDir, "03-proposed.patch"), "utf8").catch(() => "");
+    const applyCheckError = await fs.readFile(path.join(invocationDir, "04-apply-check-error.txt"), "utf8").catch(() => "");
+    const repairOutput = await fs.readFile(path.join(invocationDir, "05-repair-output.md"), "utf8").catch(() => undefined);
+    const repairError = await fs.readFile(path.join(invocationDir, "07-repair-apply-check.md"), "utf8").catch(() => undefined);
+    
+    // Load context pack metadata to rebuild it
+    const contextPackMetadata = await fs.readFile(path.join(invocationDir, "01-context-pack-metadata.json"), "utf8").catch(() => null);
+    
+    let contextPackMarkdown = "";
+    if (contextPackMetadata) {
+      // Rebuild context pack
+      const { buildExecutorContextPack } = await import("@maestro/agents");
+      const contextPack = await buildExecutorContextPack({
+        project,
+        run,
+        workspacePath: workspace.workspacePath,
+        maxBytes: 80000
+      });
+      contextPackMarkdown = contextPack.markdown;
+    }
+    
+    // Read original prompt from stage
+    const originalPromptPath = path.join(run.path, "05-executor-implement.md");
+    const originalPrompt = await fs.readFile(originalPromptPath, "utf8").catch(() => "");
+    
+    recoveryPrompt = buildFullFileReplacementPrompt({
+      originalPrompt,
+      contextPackMarkdown,
+      previousOutput,
+      previousPatch,
+      applyCheckError,
+      repairOutput,
+      repairError
+    });
+  } else {
+    throw new ApiError(400, `Recovery strategy ${recoveryMetadata.recommendedRecovery} not yet implemented`);
+  }
+  
+  // Create recovery invocation
+  const invocationId = `${new Date().toISOString().replace(/[:.]/g, "-")}-full-stack-executor-recovery`;
+  const recoveryInvocationDir = path.join(run.path, "agents", invocationId);
+  const recoveryPromptPath = path.join(recoveryInvocationDir, "08-recovery-prompt.md");
+  const recoveryOutputPath = path.join(recoveryInvocationDir, "09-recovery-output.md");
+  
+  await fs.mkdir(recoveryInvocationDir, { recursive: true });
+  await fs.writeFile(recoveryPromptPath, recoveryPrompt, "utf8");
+  
+  // Invoke provider
+  const profile = getAgentProfileForRoleOrThrow(state, "FULL_STACK_EXECUTOR", project.id);
+  const { getAdapterForProvider } = await import("@maestro/agents");
+  const adapter = getAdapterForProvider(profile.provider, await readOpenClaudeRuntimeConfig(context.homeDir));
+  
+  const startedAt = new Date().toISOString();
+  const result = await adapter.invoke({
+    invocationId,
+    runId: run.id,
+    projectId: project.id,
+    role: profile.role,
+    stage: "EXECUTOR_IMPLEMENT",
+    prompt: recoveryPrompt,
+    cwd: workspace.workspacePath,
+    workspacePath: workspace.workspacePath,
+    homeDir: context.homeDir,
+    metadata: {
+      projectName: project.name,
+      runGoal: run.goal,
+      provider: profile.provider,
+      recoveryAttempt: currentAttempts + 1,
+      recoveryStrategy: recoveryMetadata.recommendedRecovery
+    }
+  });
+  
+  const completedAt = new Date().toISOString();
+  
+  await fs.writeFile(recoveryOutputPath, result.outputText || result.errorMessage || "No output", "utf8");
+  
+  if (result.status === "FAILED" || !result.outputText) {
+    // Recovery invocation failed
+    const failedInvocation: AgentInvocation = {
+      id: invocationId,
+      runId: run.id,
+      projectId: project.id,
+      agentProfileId: profile.id,
+      role: profile.role,
+      provider: profile.provider,
+      stage: "EXECUTOR_IMPLEMENT",
+      inputPath: recoveryPromptPath,
+      outputPath: recoveryOutputPath,
+      status: "FAILED",
+      startedAt,
+      completedAt,
+      errorMessage: result.errorMessage || "Recovery invocation failed"
+    };
+    
+    const nextState = upsertAgentInvocation(state, failedInvocation);
+    await saveState(context.homeDir, nextState);
+    
+    return {
+      success: false,
+      message: "Recovery invocation failed",
+      invocationId,
+      error: result.errorMessage
+    };
+  }
+  
+  // Process recovery output based on strategy
+  if (recoveryMetadata.recommendedRecovery === "FULL_FILE_REPLACEMENT") {
+    const extractResult = extractFileReplacements(result.outputText);
+    
+    if (!extractResult.success) {
+      const failedInvocation: AgentInvocation = {
+        id: invocationId,
+        runId: run.id,
+        projectId: project.id,
+        agentProfileId: profile.id,
+        role: profile.role,
+        provider: profile.provider,
+        stage: "EXECUTOR_IMPLEMENT",
+        inputPath: recoveryPromptPath,
+        outputPath: recoveryOutputPath,
+        status: "FAILED",
+        startedAt,
+        completedAt,
+        errorMessage: `File extraction failed: ${extractResult.reason}`
+      };
+      
+      const nextState = upsertAgentInvocation(state, failedInvocation);
+      await saveState(context.homeDir, nextState);
+      
+      return {
+        success: false,
+        message: "File extraction failed",
+        invocationId,
+        error: extractResult.reason
+      };
+    }
+    
+    // Save file replacements
+    await fs.writeFile(
+      path.join(recoveryInvocationDir, "10-full-file-replacements.json"),
+      JSON.stringify(extractResult.files, null, 2),
+      "utf8"
+    );
+    
+    // Apply files and generate diff
+    const applyResult = await applyFileReplacementsAndGenerateDiff(workspace.workspacePath, extractResult.files);
+    
+    if (!applyResult.success) {
+      const failedInvocation: AgentInvocation = {
+        id: invocationId,
+        runId: run.id,
+        projectId: project.id,
+        agentProfileId: profile.id,
+        role: profile.role,
+        provider: profile.provider,
+        stage: "EXECUTOR_IMPLEMENT",
+        inputPath: recoveryPromptPath,
+        outputPath: recoveryOutputPath,
+        status: "FAILED",
+        startedAt,
+        completedAt,
+        errorMessage: `File apply failed: ${applyResult.reason}`
+      };
+      
+      const nextState = upsertAgentInvocation(state, failedInvocation);
+      await saveState(context.homeDir, nextState);
+      
+      return {
+        success: false,
+        message: "File apply failed",
+        invocationId,
+        error: applyResult.reason
+      };
+    }
+    
+    // Save generated diff
+    await fs.writeFile(
+      path.join(recoveryInvocationDir, "11-recovery-generated-diff.patch"),
+      applyResult.diff!,
+      "utf8"
+    );
+    
+    // Capture workspace diff
+    const { captureRunGitDiff } = await import("@maestro/memory");
+    await captureRunGitDiff(project, run, {
+      repoPath: workspace.workspacePath,
+      source: "WORKSPACE_SANDBOX"
+    });
+    
+    // Create successful invocation
+    const successInvocation: AgentInvocation = {
+      id: invocationId,
+      runId: run.id,
+      projectId: project.id,
+      agentProfileId: profile.id,
+      role: profile.role,
+      provider: profile.provider,
+      stage: "EXECUTOR_IMPLEMENT",
+      inputPath: recoveryPromptPath,
+      outputPath: recoveryOutputPath,
+      status: "SUCCEEDED",
+      startedAt,
+      completedAt
+    };
+    
+    let nextState = upsertAgentInvocation(state, successInvocation);
+    
+    // Promote to EXECUTOR_REPORTED
+    const { attachRunStage } = await import("@maestro/memory");
+    const attachResult = await attachRunStage(project, run, "executor", recoveryOutputPath);
+    nextState = upsertRun(nextState, attachResult.runRecord);
+    
+    await saveState(context.homeDir, nextState);
+    
+    return {
+      success: true,
+      message: "Recovery succeeded",
+      invocationId,
+      filesChanged: extractResult.files.length,
+      diffPath: path.join(run.path, "13-git-diff.md")
+    };
+  }
+  
+  throw new ApiError(500, "Recovery strategy not fully implemented");
 }
 
 async function executeNextStepAction(context: RequestContext, runId: string): Promise<unknown> {
