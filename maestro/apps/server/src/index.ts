@@ -593,9 +593,9 @@ async function enrichInvocationsWithRecoveryMetadata(invocations: AgentInvocatio
             recoverable: recoveryMetadata.recoverable,
             failureKind: recoveryMetadata.failureKind,
             recommendedRecovery: recoveryMetadata.recommendedRecovery,
-            attempt: recoveryMetadata.attempt,
-            maxAttempts: recoveryMetadata.maxAttempts,
-            reason: recoveryMetadata.reason
+            reason: recoveryMetadata.reason,
+            patchRepair: recoveryMetadata.patchRepair,
+            runRecovery: recoveryMetadata.runRecovery
           }
         };
       }
@@ -902,10 +902,9 @@ async function recoverExecutorAction(context: RequestContext, runId: string): Pr
     throw new ApiError(400, `Failure is not recoverable: ${recoveryMetadata.reason}`);
   }
   
-  // Check if max attempts reached
-  const currentAttempts = await countRecoveryAttempts(run.path, "FULL_STACK_EXECUTOR");
-  if (currentAttempts >= recoveryMetadata.maxAttempts) {
-    throw new ApiError(400, `Maximum recovery attempts (${recoveryMetadata.maxAttempts}) reached`);
+  // Check if max run recovery attempts reached
+  if (recoveryMetadata.runRecovery.attempt >= recoveryMetadata.runRecovery.maxAttempts) {
+    throw new ApiError(400, `Maximum run recovery attempts (${recoveryMetadata.runRecovery.maxAttempts}) reached`);
   }
   
   // Get workspace
@@ -974,6 +973,8 @@ async function recoverExecutorAction(context: RequestContext, runId: string): Pr
   const { getAdapterForProvider } = await import("@maestro/agents");
   const adapter = getAdapterForProvider(profile.provider, await readOpenClaudeRuntimeConfig(context.homeDir));
   
+  const currentRecoveryAttempt = recoveryMetadata.runRecovery.attempt + 1;
+  
   const startedAt = new Date().toISOString();
   const result = await adapter.invoke({
     invocationId,
@@ -989,7 +990,7 @@ async function recoverExecutorAction(context: RequestContext, runId: string): Pr
       projectName: project.name,
       runGoal: run.goal,
       provider: profile.provider,
-      recoveryAttempt: currentAttempts + 1,
+      recoveryAttempt: currentRecoveryAttempt,
       recoveryStrategy: recoveryMetadata.recommendedRecovery
     }
   });
@@ -997,6 +998,20 @@ async function recoverExecutorAction(context: RequestContext, runId: string): Pr
   const completedAt = new Date().toISOString();
   
   await fs.writeFile(recoveryOutputPath, result.outputText || result.errorMessage || "No output", "utf8");
+  
+  // Update recovery metadata with new attempt
+  const updatedMetadata = {
+    ...recoveryMetadata,
+    runRecovery: {
+      ...recoveryMetadata.runRecovery,
+      attempt: currentRecoveryAttempt
+    }
+  };
+  await fs.writeFile(
+    path.join(invocationDir, "00-recovery-metadata.json"),
+    JSON.stringify(updatedMetadata, null, 2),
+    "utf8"
+  );
   
   if (result.status === "FAILED" || !result.outputText) {
     // Recovery invocation failed

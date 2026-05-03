@@ -20,7 +20,7 @@ import {
 import { extractUnifiedDiffFromAgentOutput, validatePatchSafety } from "./patch-extractor.js";
 import { repairExecutorPatch, type RepairPatchOptions } from "./executor-patch-repair.js";
 import type { OpenClaudeAdapterConfig } from "./runtime.js";
-import { classifyExecutorFailure, saveRecoveryMetadata } from "./executor-recovery.js";
+import { classifyExecutorFailure, saveRecoveryMetadata, type RecoveryMetadata } from "./executor-recovery.js";
 
 export interface ProcessExecutorPatchInput {
   homeDir: string;
@@ -65,24 +65,41 @@ async function createFailedInvocationWithRecovery(
   
   if (classification.recoverable) {
     const invocationDir = path.dirname(outputPath);
-    const previousAttempts = await countRecoveryAttempts(run.path, invocation.role);
     
-    await saveRecoveryMetadata(invocationDir, {
+    // Detect if patch repair was attempted
+    const isPatchRepairFailure = 
+      classification.kind === "PATCH_REPAIR_FAILED" ||
+      errorMessage.includes("Patch repair failed");
+    
+    const metadata: RecoveryMetadata = {
       failureKind: classification.kind,
       recoverable: true,
       recommendedRecovery: classification.recommendedStrategy,
-      attempt: previousAttempts + 1,
-      maxAttempts: classification.maxAttempts,
       previousInvocationId: invocation.id,
-      reason: classification.reason
-    });
+      reason: classification.reason,
+      runRecovery: {
+        attempt: 0,
+        maxAttempts: 2 // Run recovery allows 2 attempts
+      }
+    };
+    
+    // If patch repair was attempted, record it
+    if (isPatchRepairFailure) {
+      const repairMatch = errorMessage.match(/after (\d+) attempt/);
+      const repairAttempts = repairMatch ? parseInt(repairMatch[1], 10) : 1;
+      
+      metadata.patchRepair = {
+        attempt: repairAttempts,
+        maxAttempts: 1,
+        result: "failed"
+      };
+    }
+    
+    await saveRecoveryMetadata(invocationDir, metadata);
   }
   
   return failedInvocation;
 }
-
-// Import countRecoveryAttempts
-import { countRecoveryAttempts } from "./executor-recovery.js";
 
 /**
  * Process Executor patch: extract, validate, and apply to workspace

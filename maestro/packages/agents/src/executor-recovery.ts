@@ -39,10 +39,17 @@ export interface RecoveryMetadata {
   failureKind: ExecutorFailureKind;
   recoverable: boolean;
   recommendedRecovery: RecoveryStrategy;
-  attempt: number;
-  maxAttempts: number;
   previousInvocationId: string;
   reason: string;
+  patchRepair?: {
+    attempt: number;
+    maxAttempts: number;
+    result: "failed" | "succeeded";
+  };
+  runRecovery: {
+    attempt: number;
+    maxAttempts: number;
+  };
 }
 
 /**
@@ -215,7 +222,7 @@ export async function countRecoveryAttempts(
       if (entry.isDirectory() && entry.name.includes(role.toLowerCase().replace(/_/g, "-"))) {
         const metadata = await loadRecoveryMetadata(path.join(agentsDir, entry.name));
         if (metadata) {
-          count = Math.max(count, metadata.attempt);
+          count = Math.max(count, metadata.runRecovery.attempt);
         }
       }
     }
