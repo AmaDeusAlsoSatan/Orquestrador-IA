@@ -32,6 +32,13 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
   }
 
   const stage = resolveStageForRole(profile.role);
+  
+  // Generate invocationId once at the beginning
+  const invocationId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${profile.id}`;
+  const invocationDir = path.join(run.path, "agents", invocationId);
+  const promptPath = path.join(invocationDir, "01-input-prompt.md");
+  const outputPath = path.join(invocationDir, "02-output.md");
+  
   let prompt = await readPromptForStage(run, stage);
   
   // Add Executor Context Pack for patch-based executor
@@ -47,9 +54,7 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
       // Append context pack to prompt
       prompt = `${prompt}\n\n---\n\n${contextPack.markdown}`;
       
-      // Save context pack metadata
-      const invocationId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${profile.id}`;
-      const invocationDir = path.join(run.path, "agents", invocationId);
+      // Save context pack metadata in the same invocation directory
       await fs.mkdir(invocationDir, { recursive: true });
       await fs.writeFile(
         path.join(invocationDir, "01-context-pack-metadata.json"),
@@ -66,14 +71,39 @@ export async function prepareAgentInvocation(options: PrepareAgentInvocationOpti
     }
   }
   
-  const invocationId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${profile.id}`;
-  const invocationDir = path.join(run.path, "agents", invocationId);
-  const promptPath = path.join(invocationDir, "01-input-prompt.md");
-  const outputPath = path.join(invocationDir, "02-output.md");
   const startedAt = new Date().toISOString();
 
   await fs.mkdir(invocationDir, { recursive: true });
   await fs.writeFile(promptPath, ensureTrailingNewline(renderInvocationPrompt(profile, prompt, workspace)), "utf8");
+
+  // Validate prompt is not empty before invoking
+  if (!prompt || prompt.trim().length === 0) {
+    const invocation: AgentInvocation = {
+      id: invocationId,
+      runId: run.id,
+      projectId: project.id,
+      agentProfileId: profile.id,
+      role: profile.role,
+      provider: profile.provider,
+      stage,
+      inputPath: promptPath,
+      outputPath,
+      status: "FAILED",
+      startedAt,
+      completedAt: new Date().toISOString(),
+      errorMessage: "EMPTY_AGENT_PROMPT: Prompt is empty or undefined. Cannot invoke agent without prompt."
+    };
+    
+    await fs.writeFile(outputPath, "Error: Empty prompt provided to agent.\n", "utf8");
+    await fs.writeFile(path.join(invocationDir, "00-invocation.json"), `${JSON.stringify(invocation, null, 2)}\n`, "utf8");
+    
+    return {
+      invocation,
+      invocationDir,
+      promptPath,
+      outputPath
+    };
+  }
 
   const adapter = getAdapterForProvider(profile.provider, openClaudeConfig);
   const result = await adapter.invoke({

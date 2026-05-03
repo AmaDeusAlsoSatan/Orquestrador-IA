@@ -839,6 +839,11 @@ async function executeNextStepAction(context: RequestContext, runId: string): Pr
         if (!workspace) {
           // Create workspace automatically before invoking executor
           await createWorkspaceAction(context, runId, false);
+          // Reload state to get updated workspace
+          const { state: updatedState } = await loadState(context.homeDir);
+          context = { ...context, body: { role: nextAction.role } };
+          // Use updated state for invocation
+          return invokeRunAgentRoute(context, runId);
         }
       }
       
